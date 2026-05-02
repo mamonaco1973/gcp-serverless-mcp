@@ -198,6 +198,19 @@ def _search_resources(query: str = "", asset_types: list = None) -> list:
 # Request / response helpers
 # ================================================================================
 
+def _to_dict(data) -> dict:
+    """Convert resource.data to a plain Python dict.
+
+    Proto-plus transparently unwraps google.protobuf.Struct to a MapComposite,
+    which lacks the DESCRIPTOR attribute MessageToDict requires. Fall back to
+    dict() when that happens.
+    """
+    try:
+        return MessageToDict(data)
+    except AttributeError:
+        return dict(data) if data else {}
+
+
 def _get_body(request) -> dict:
     """Parse JSON body from a Flask-style request, returning {} on any failure."""
     try:
@@ -301,7 +314,7 @@ def list_compute_instances(request):
         assets = _list_assets(["compute.googleapis.com/Instance"])
         lines  = [f"Compute Engine instances ({len(assets)} total):", ""]
         for asset in assets:
-            data   = MessageToDict(asset.resource.data)
+            data   = _to_dict(asset.resource.data)
             name   = data.get("name", asset.name.split("/")[-1])
             # machineType and zone are full resource URLs — extract the suffix.
             mt     = data.get("machineType", "unknown").split("/")[-1]
@@ -331,7 +344,7 @@ def list_storage_buckets(request):
         assets = _list_assets(["storage.googleapis.com/Bucket"])
         lines  = [f"Cloud Storage buckets ({len(assets)} total):", ""]
         for asset in assets:
-            data          = MessageToDict(asset.resource.data)
+            data          = _to_dict(asset.resource.data)
             name          = data.get("id", asset.name.split("/")[-1])
             location      = data.get("location", "unknown")
             storage_class = data.get("storageClass", "STANDARD")
@@ -430,7 +443,7 @@ def list_static_ip_addresses(request):
         ]
         lines = [f"Static external IP addresses ({len(external)} total):", ""]
         for asset in external:
-            data    = MessageToDict(asset.resource.data)
+            data    = _to_dict(asset.resource.data)
             name    = data.get("name", asset.name.split("/")[-1])
             address = data.get("address", "(unassigned)")
             # region is a full URL for regional IPs, empty for global.

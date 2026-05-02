@@ -99,6 +99,33 @@ call_api() {
 }
 
 # ================================================================================
+# Wait for IAM propagation
+# Polls /tools until HTTP 200 — IAM bindings can take up to ~60s to propagate.
+# ================================================================================
+
+wait_for_ready() {
+    local max_attempts=24 attempt=0 http_code
+    echo "NOTE: Waiting for endpoint to become accessible..."
+    while (( attempt < max_attempts )); do
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X GET "${FUNCTION_URL}/tools" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            < /dev/null)
+        if [[ "$http_code" == "200" ]]; then
+            echo "NOTE: Endpoint ready after $(( attempt * 5 ))s."
+            return 0
+        fi
+        (( attempt++ ))
+        echo "NOTE: HTTP ${http_code} — retrying in 5s... (${attempt}/${max_attempts})"
+        sleep 5
+    done
+    echo "ERROR: Endpoint not ready after $(( max_attempts * 5 ))s."
+    exit 1
+}
+
+wait_for_ready
+
+# ================================================================================
 # Validate all endpoints
 # ================================================================================
 
