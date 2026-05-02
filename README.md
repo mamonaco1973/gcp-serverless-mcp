@@ -17,6 +17,8 @@ querying the GCP Cloud Asset Inventory API. Cloud Run IAM enforces OIDC token
 authentication on every route, and the proxy handles token acquisition and
 caching.
 
+![diagram](gcp-serverless-mcp.png)
+
 Key capabilities demonstrated:
 
 1. **Serverless MCP Tools** – Ten Cloud Function-backed resource query tools
@@ -52,6 +54,12 @@ versioned, and secured without requiring local runtimes on the caller's machine.
   Cloud Build Editor, Artifact Registry Admin, IAM Admin,
   Cloud Asset Viewer, Storage Admin, Service Account Admin,
   Service Account Key Admin, Project IAM Admin
+
+> **PowerShell proxy (`proxy.ps1`) requires PowerShell 7+** (`pwsh`).
+> It uses `[System.Security.Cryptography.RSA]::ImportFromPem()` to load the
+> service account private key, which is not available in Windows PowerShell 5.1.
+> Install PowerShell 7 from https://aka.ms/powershell or via `winget install Microsoft.PowerShell`.
+> On Linux/macOS use `proxy.sh` instead — it has no PowerShell dependency.
 
 ## Download this Repository
 
