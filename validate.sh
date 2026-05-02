@@ -115,7 +115,7 @@ wait_for_ready() {
             echo "NOTE: Endpoint ready after $(( attempt * 5 ))s."
             return 0
         fi
-        (( attempt++ ))
+        attempt=$(( attempt + 1 ))
         echo "NOTE: HTTP ${http_code} — retrying in 5s... (${attempt}/${max_attempts})"
         sleep 5
     done
