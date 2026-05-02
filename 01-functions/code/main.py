@@ -513,7 +513,7 @@ def list_static_ip_addresses(request):
         # less relevant from a public-exposure standpoint.
         external = [
             a for a in assets
-            if MessageToDict(a.resource.data).get(
+            if _to_dict(a.resource.data).get(
                 "addressType", "EXTERNAL"
             ) == "EXTERNAL"
         ]
