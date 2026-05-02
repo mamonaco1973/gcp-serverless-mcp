@@ -94,12 +94,22 @@ resource "google_cloudfunctions2_function" "serverless_mcp" {
   }
 }
 
-# Restrict invocation to the proxy SA only — CF2 checks its own IAM layer
-# before Cloud Run; cloudfunctions.invoker is the canonical role for CF2.
+# CF2 has two independent IAM layers — both must grant the proxy SA access.
+# The CF2 function layer controls CF2 API operations.
 resource "google_cloudfunctions2_function_iam_member" "proxy_invoker" {
   project        = local.project_id
   location       = google_cloudfunctions2_function.serverless_mcp.location
   cloud_function = google_cloudfunctions2_function.serverless_mcp.name
   role           = "roles/cloudfunctions.invoker"
   member         = "serviceAccount:${google_service_account.proxy.email}"
+}
+
+# The Cloud Run service layer controls HTTP invocation — this is what actually
+# enforces auth on incoming requests before the function code runs.
+resource "google_cloud_run_v2_service_iam_member" "proxy_invoker" {
+  project  = local.project_id
+  location = google_cloudfunctions2_function.serverless_mcp.location
+  name     = google_cloudfunctions2_function.serverless_mcp.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.proxy.email}"
 }

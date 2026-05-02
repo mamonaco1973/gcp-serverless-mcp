@@ -29,6 +29,15 @@ echo "NOTE: Function URL: ${FUNCTION_URL}"
 
 echo "NOTE: Acquiring OIDC token..."
 
+# Save active account so gcloud state is restored on exit regardless of outcome.
+_PREV_ACCOUNT=$(gcloud config get-value account 2>/dev/null || true)
+_restore_account() {
+    if [[ -n "${_PREV_ACCOUNT:-}" ]]; then
+        gcloud config set account "$_PREV_ACCOUNT" --quiet 2>/dev/null || true
+    fi
+}
+trap _restore_account EXIT
+
 gcloud auth activate-service-account \
     --key-file=02-proxy/proxy-sa-key.json \
     --quiet
