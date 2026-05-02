@@ -1,7 +1,7 @@
 # CLAUDE.md — gcp-serverless-mcp
 
 A serverless GCP Cloud Asset Inventory API designed for MCP (Model Context
-Protocol) tool use. Seven Cloud Functions 2nd Gen handlers expose resource
+Protocol) tool use. Ten Cloud Functions 2nd Gen handlers expose resource
 inventory tools behind an HTTP API secured with GCP OIDC authentication. A
 local MCP proxy acquires OIDC tokens from a service account key file and makes
 the remote serverless backend transparent to the AI caller.
@@ -33,6 +33,9 @@ https://{func-name}-uc.a.run.app
 | list_static_ip_addresses | `POST /resources/static-ips` | All static external IPs |
 | find_resources_by_type | `POST /resources/by-type` | Resources of a specific asset type |
 | find_resources_by_region | `POST /resources/by-region` | Resources in a specific region or zone |
+| describe_resource | `POST /resources/describe` | Full config detail for a named resource |
+| list_cloud_functions_detail | `POST /resources/cloud-functions` | All Cloud Functions with runtime, memory, URL, SA, env vars |
+| list_bucket_objects | `POST /resources/bucket-objects` | All objects in a GCS bucket with size and last-modified |
 
 ---
 
@@ -57,12 +60,15 @@ Cloud Function 2nd Gen (serverless-mcp-func-xxxx-uc.a.run.app)
   ├─ POST /resources/by-label              → filter by label key+value
   ├─ POST /resources/static-ips            → static external IP inventory
   ├─ POST /resources/by-type               → resources of a specific type
-  └─ POST /resources/by-region             → resources in a named region
+  ├─ POST /resources/by-region             → resources in a named region
+  ├─ POST /resources/describe              → full config for a named resource
+  ├─ POST /resources/cloud-functions       → Cloud Function detail
+  └─ POST /resources/bucket-objects        → objects in a GCS bucket
        │
        │  Application Default Credentials (function SA)
        ▼
-  Cloud Asset Inventory API
-  scope: projects/{PROJECT_ID}
+  Cloud Asset Inventory API          Cloud Storage API
+  scope: projects/{PROJECT_ID}       (list_bucket_objects only)
 ```
 
 **Auth layers:**
@@ -71,8 +77,9 @@ Cloud Function 2nd Gen (serverless-mcp-func-xxxx-uc.a.run.app)
    audience
 2. Cloud Run validates the id_token signature, audience, and expiry at the
    platform level — the function never sees unauthenticated requests
-3. The function's service account queries Cloud Asset Inventory via ADC —
-   no credentials in code (`roles/cloudasset.viewer` assigned at project scope)
+3. The function's service account queries Cloud Asset Inventory and Cloud
+   Storage via ADC — no credentials in code (`roles/cloudasset.viewer` and
+   `roles/storage.objectViewer` assigned at project scope)
 
 **Why platform-level auth (not in-code):** Unlike Azure Functions FC1 which
 does not support Easy Auth, Cloud Run (backing CF2) validates OIDC tokens
@@ -89,13 +96,13 @@ structs. Pre-formatted summaries let the AI narrate results without parsing.
 ```
 01-functions/
   code/
-    main.py          All seven handlers + Cloud Asset Inventory client
-    requirements.txt functions-framework, google-cloud-asset
+    main.py          All ten handlers + Cloud Asset Inventory + Storage clients
+    requirements.txt functions-framework, google-cloud-asset, google-cloud-storage
   main.tf            google + random + archive providers, project locals
   functions.tf       Service accounts, GCS source bucket, CF2 function,
                      Cloud Run IAM binding
   outputs.tf         function_url, proxy_sa_key_json, proxy_sa_email,
-                     project_id
+                     project_id, source_bucket_name
 02-proxy/
   proxy.sh           Bash MCP stdio proxy (OIDC token, JSON-RPC dispatcher)
   proxy.ps1          PowerShell 7+ equivalent of proxy.sh
@@ -105,7 +112,7 @@ api_setup.sh         Enable required GCP APIs
 check_env.sh         Pre-flight: verify gcloud/terraform/jq + credentials.json
 apply.sh             Full deployment + key export + config generation + validation
 destroy.sh           Teardown + cleanup of generated files
-validate.sh          Acquires OIDC token, calls all 8 endpoints, checks HTTP 200
+validate.sh          Acquires OIDC token, calls all 11 endpoints, checks HTTP 200
 credentials.json     GCP service account key (gitignored — place in repo root)
 ```
 
@@ -138,7 +145,7 @@ credentials.json     GCP service account key (gitignored — place in repo root)
 3. **Key export** — writes proxy SA key JSON to `02-proxy/proxy-sa-key.json`
 4. **Config generation** — reads Terraform outputs, builds
    `02-proxy/claude_desktop_config_*.json` via `jq` (gitignored)
-5. **`validate.sh`** — acquires an OIDC token and calls all 8 endpoints
+5. **`validate.sh`** — acquires an OIDC token and calls all 11 endpoints
 
 ---
 
@@ -148,6 +155,7 @@ credentials.json     GCP service account key (gitignored — place in repo root)
 
 - `google_service_account` `serverless-mcp-func-sa` — function identity
 - `google_project_iam_member` — `roles/cloudasset.viewer` for function SA
+- `google_project_iam_member` — `roles/storage.objectViewer` for function SA
 - `google_service_account` `serverless-mcp-proxy-sa` — proxy identity
 - `google_service_account_key` — JSON key for proxy SA (sensitive output)
 - `google_storage_bucket` `serverless-mcp-src-{suffix}` — function source
@@ -156,27 +164,35 @@ credentials.json     GCP service account key (gitignored — place in repo root)
 - `google_storage_bucket_object` — uploads zip to source bucket
 - `google_cloudfunctions2_function` `serverless-mcp-func-{suffix}` —
   Python 3.11, function SA identity, 10 max instances
-- `google_cloud_run_v2_service_iam_member` — `roles/run.invoker` for
-  proxy SA only (restricts invocation to the proxy)
+- `google_cloudfunctions2_function_iam_member` — `roles/cloudfunctions.invoker`
+  for proxy SA (CF2 function layer)
+- `google_cloud_run_v2_service_iam_member` — `roles/run.invoker` for proxy SA
+  (Cloud Run HTTP layer — both bindings required for CF2 invocation)
 
 ---
 
 ## Function Code
 
-All seven handlers live in `main.py` and follow the same pattern:
+All ten handlers live in `main.py` and follow the same pattern:
 1. `_list_assets(types)` or `_search_resources(query)` — queries Cloud Asset
    Inventory via `AssetServiceClient` (ADC → function SA at runtime)
-2. `MessageToDict(asset.resource.data)` — converts proto Struct to Python dict
+2. `_to_dict(asset.resource.data)` — converts proto Struct or proto-plus
+   MapComposite to a plain Python dict (falls back from `MessageToDict` when
+   proto-plus has already unwrapped the Struct)
 3. Format results as plain-text and return `(body, status, headers)` tuple
 
-**Two query methods:**
+`list_bucket_objects` uses `google.cloud.storage.Client` (also ADC) instead
+of Cloud Asset Inventory.
+
+**Two CAI query methods:**
 - `_list_assets()` — `ListAssetsRequest` with `content_type=RESOURCE`; returns
   full resource data (machine type, status, etc.)
 - `_search_resources()` — `SearchAllResourcesRequest`; supports label queries
   and free-text filtering; used for label/type/region filtering tools
 
 **Parameterized tools:** `find_resources_by_label`, `find_resources_by_type`,
-and `find_resources_by_region` read input from the POST body via `_get_body()`.
+`find_resources_by_region`, `describe_resource`, and `list_bucket_objects`
+read input from the POST body via `_get_body()`.
 
 ---
 

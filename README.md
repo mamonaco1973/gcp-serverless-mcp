@@ -2,14 +2,14 @@
 
 This project delivers a **serverless MCP (Model Context Protocol) backend** on
 GCP that lets an AI assistant query GCP resource inventory in plain English.
-Seven Cloud Functions 2nd Gen handlers expose resource query tools behind an
+Ten Cloud Functions 2nd Gen handlers expose resource query tools behind an
 **HTTP API** secured with **GCP OIDC authentication**. A lightweight local
 proxy acquires OIDC tokens and forwards MCP calls to the Cloud Function,
 making the remote serverless backend completely transparent to the AI caller.
 
-It uses **Terraform** and **Python (google-cloud-asset)** to provision and
-deploy the backend, and a **PowerShell or Bash proxy script** to bridge the MCP
-stdio transport to the authenticated HTTP API.
+It uses **Terraform** and **Python (google-cloud-asset, google-cloud-storage)**
+to provision and deploy the backend, and a **PowerShell or Bash proxy script**
+to bridge the MCP stdio transport to the authenticated HTTP API.
 
 This design follows a **serverless MCP architecture** where the AI thinks it is
 talking to a local tool server, while all tool logic runs in a Cloud Function
@@ -19,7 +19,7 @@ caching.
 
 Key capabilities demonstrated:
 
-1. **Serverless MCP Tools** – Seven Cloud Function-backed resource query tools
+1. **Serverless MCP Tools** – Ten Cloud Function-backed resource query tools
    exposed as a standard MCP tool server, invokable by any MCP-compatible AI
    client.
 2. **GCP OIDC Auth** – All routes require a valid OIDC id_token validated at
@@ -75,7 +75,7 @@ NOTE: terraform found.
 NOTE: jq found.
 NOTE: Deploying GCP infrastructure...
 ...
-NOTE: Validation complete — all 8 endpoints returned HTTP 200.
+NOTE: Validation complete — all 11 endpoints returned HTTP 200.
 ```
 
 ### Build Results
@@ -89,7 +89,8 @@ When the deployment completes, the following resources are created:
 
 - **Security & Auth:**
   - `serverless-mcp-func-sa` — function service account with
-    `roles/cloudasset.viewer` to query Cloud Asset Inventory
+    `roles/cloudasset.viewer` to query Cloud Asset Inventory and
+    `roles/storage.objectViewer` to list bucket contents
   - `serverless-mcp-proxy-sa` — proxy service account with `roles/run.invoker`
     on the function; key exported to `02-proxy/proxy-sa-key.json`
   - OIDC id_token validated by Cloud Run platform — no in-code JWT validation
@@ -97,10 +98,10 @@ When the deployment completes, the following resources are created:
     due to FC1 Easy Auth limitations)
 
 - **Cloud Function Handlers:**
-  - Eight Python 3.11 handlers in a single `main.py`
+  - Eleven Python 3.11 handlers in a single `main.py`
   - `GET /tools` — discovery endpoint; returns tool registry for proxy
     self-config
-  - Seven `POST /resources/*` routes — one per MCP tool
+  - Ten `POST /resources/*` routes — one per MCP tool
 
 - **MCP Proxy Scripts:**
   - `02-proxy/proxy.ps1` — Windows PowerShell 7+ proxy with OIDC token
@@ -123,10 +124,10 @@ When the deployment completes, the following resources are created:
 
 ## MCP Tools
 
-The **GCP Resource MCP API** exposes seven tools through a single Cloud
-Function. Four tools take no input parameters; three accept parameters to
-filter results. All responses are plain-text summaries suitable for direct AI
-narration.
+The **GCP Resource MCP API** exposes ten tools through a single Cloud
+Function. Six tools take no input parameters; four accept parameters to
+filter or target results. All responses are plain-text summaries suitable for
+direct AI narration.
 
 > All routes require a valid **GCP OIDC id_token** issued for the proxy service
 > account. The proxy acquires and caches this token automatically.
@@ -161,6 +162,9 @@ The proxy strips `route` before forwarding tool schemas to the AI.
 | `list_static_ip_addresses` | `POST /resources/static-ips` | none | All static external IPs with address, region, status |
 | `find_resources_by_type` | `POST /resources/by-type` | `asset_type` | All resources of a specific GCP asset type |
 | `find_resources_by_region` | `POST /resources/by-region` | `region` | All resources in a specific GCP region or zone |
+| `describe_resource` | `POST /resources/describe` | `resource_name` | Full configuration detail for a named resource |
+| `list_cloud_functions_detail` | `POST /resources/cloud-functions` | none | All Cloud Functions with runtime, memory, URL, SA, env vars |
+| `list_bucket_objects` | `POST /resources/bucket-objects` | `bucket_name` | All objects in a GCS bucket with size and last-modified |
 
 ### Example Tool Responses
 

@@ -144,7 +144,7 @@ call_api "POST" "resources/by-type"    '{"asset_type":"compute.googleapis.com/In
 call_api "POST" "resources/by-region"  '{"region":"us-central1"}'
 call_api "POST" "resources/describe"        '{"resource_name":"serverless-mcp-func"}'
 call_api "POST" "resources/cloud-functions"
-call_api "POST" "resources/bucket-objects"  "{\"bucket_name\":\"${SOURCE_BUCKET}\}"
+call_api "POST" "resources/bucket-objects"  "{\"bucket_name\":\"${SOURCE_BUCKET}\"}"
 
 echo ""
 echo "========================================================================"

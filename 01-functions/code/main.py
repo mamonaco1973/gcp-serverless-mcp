@@ -256,17 +256,32 @@ def _search_resources(query: str = "", asset_types: list = None) -> list:
 # Request / response helpers
 # ================================================================================
 
+def _deep_convert(obj):
+    """Recursively convert proto-plus collections to plain Python types.
+
+    MapComposite and RepeatedComposite don't serialise with json.dumps —
+    this walks the tree and converts them to dicts and lists.
+    """
+    if isinstance(obj, dict):
+        return {k: _deep_convert(v) for k, v in obj.items()}
+    if hasattr(obj, "items"):          # MapComposite
+        return {k: _deep_convert(v) for k, v in obj.items()}
+    if hasattr(obj, "__iter__") and not isinstance(obj, (str, bytes)):
+        return [_deep_convert(v) for v in obj]
+    return obj
+
+
 def _to_dict(data) -> dict:
     """Convert resource.data to a plain Python dict.
 
     Proto-plus transparently unwraps google.protobuf.Struct to a MapComposite,
     which lacks the DESCRIPTOR attribute MessageToDict requires. Fall back to
-    dict() when that happens.
+    a deep recursive conversion when that happens.
     """
     try:
         return MessageToDict(data)
     except AttributeError:
-        return dict(data) if data else {}
+        return _deep_convert(dict(data)) if data else {}
 
 
 def _get_body(request) -> dict:
