@@ -1,48 +1,26 @@
 terraform {
   required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 4.0"
-    }
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = "~> 3.0"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
     }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
-  }
-}
-
-provider "azurerm" {
-  features {
-    resource_group {
-      prevent_deletion_if_contains_resources = false
-    }
-    key_vault {
-      # Fully purge on destroy so re-deploys don't hit soft-delete conflicts.
-      purge_soft_delete_on_destroy    = true
-      recover_soft_deleted_key_vaults = true
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
     }
   }
 }
 
-provider "azuread" {}
-
-resource "random_id" "suffix" {
-  byte_length = 4
+provider "google" {
+  credentials = file("../credentials.json")
+  project     = local.project_id
+  region      = "us-central1"
 }
 
-variable "location" {
-  description = "Azure region for all resources"
-  type        = string
-  default     = "Central US"
-}
-
-data "azurerm_client_config" "current" {}
-
-resource "azurerm_resource_group" "serverless_mcp" {
-  name     = "serverless-mcp-rg"
-  location = var.location
+locals {
+  project_id = jsondecode(file("../credentials.json")).project_id
 }

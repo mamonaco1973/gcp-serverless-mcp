@@ -1,67 +1,66 @@
-# Azure Serverless MCP — Resource Graph API
+# GCP Serverless MCP — Cloud Asset Inventory API
 
 This project delivers a **serverless MCP (Model Context Protocol) backend** on
-Azure that lets an AI assistant query Azure resource inventory in plain English.
-Seven Azure Functions expose resource query tools behind an **HTTP API** secured
-with **Entra ID Bearer token authentication**. A lightweight local proxy acquires
-tokens and forwards MCP calls to the Function App, making the remote serverless
-backend completely transparent to the AI caller.
+GCP that lets an AI assistant query GCP resource inventory in plain English.
+Seven Cloud Functions 2nd Gen handlers expose resource query tools behind an
+**HTTP API** secured with **GCP OIDC authentication**. A lightweight local
+proxy acquires OIDC tokens and forwards MCP calls to the Cloud Function,
+making the remote serverless backend completely transparent to the AI caller.
 
-It uses **Terraform** and **Python (azure-mgmt-resourcegraph)** to provision and
+It uses **Terraform** and **Python (google-cloud-asset)** to provision and
 deploy the backend, and a **PowerShell or Bash proxy script** to bridge the MCP
 stdio transport to the authenticated HTTP API.
 
-![diagram](azure-serverless-mcp.png)
-
 This design follows a **serverless MCP architecture** where the AI thinks it is
-talking to a local tool server, while all tool logic runs in Azure Functions
-querying the Azure Resource Graph API. Entra ID enforces Bearer token
-authentication on every route, and the proxy handles token acquisition and caching.
+talking to a local tool server, while all tool logic runs in a Cloud Function
+querying the GCP Cloud Asset Inventory API. Cloud Run IAM enforces OIDC token
+authentication on every route, and the proxy handles token acquisition and
+caching.
 
 Key capabilities demonstrated:
 
-1. **Serverless MCP Tools** – Seven Function-backed resource query tools exposed
-   as a standard MCP tool server, invokable by any MCP-compatible AI client.
-2. **Entra ID Bearer Auth** – All routes require a valid JWT validated in-code
-   against Azure AD's JWKS endpoint. Unsigned requests are rejected before any
-   query runs.
+1. **Serverless MCP Tools** – Seven Cloud Function-backed resource query tools
+   exposed as a standard MCP tool server, invokable by any MCP-compatible AI
+   client.
+2. **GCP OIDC Auth** – All routes require a valid OIDC id_token validated at
+   the Cloud Run platform level. The proxy SA key file signs a JWT that is
+   exchanged for an id_token at the Google token endpoint.
 3. **Self-Configuring Proxy** – At startup the proxy calls `GET /tools`
-   (authenticated) to load route mappings and tool schemas from the backend. No
-   tool definitions are hardcoded in the proxy — add a tool in `function_app.py`,
+   (authenticated) to load route mappings and tool schemas from the backend.
+   No tool definitions are hardcoded in the proxy — add a tool in `main.py`,
    redeploy, and the proxy picks it up automatically on next start.
 4. **Generic Proxy Pattern** – The proxy contains no tool-specific logic. Point
    it at a different `MCP_API_ENDPOINT` to get a completely different tool set.
-5. **Managed Identity** – The Function App queries Resource Graph using a
-   System-Assigned Managed Identity with `Reader` on the subscription. No
-   credentials in code or app settings.
-6. **Infrastructure as Code** – Terraform provisions all Functions, Entra app
-   registrations, service plan, and RBAC assignments in a single apply.
+5. **ADC Function Identity** – The Cloud Function queries Cloud Asset Inventory
+   using Application Default Credentials (its service account). No credentials
+   in code or environment variables.
+6. **Infrastructure as Code** – Terraform provisions all Cloud Functions,
+   service accounts, IAM bindings, and source storage in a single apply.
 
 Together, these components form a **reference architecture for serverless MCP
-tool backends on Azure** — demonstrating how AI tools can be centrally deployed,
+tool backends on GCP** — demonstrating how AI tools can be centrally deployed,
 versioned, and secured without requiring local runtimes on the caller's machine.
 
 ## Prerequisites
 
-* An Azure subscription
-* [Install Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
+* A GCP project
+* [Install gcloud CLI](https://cloud.google.com/sdk/docs/install)
 * [Install Terraform](https://developer.hashicorp.com/terraform/install)
-* `jq` and `zip` in PATH (used by `apply.sh` and `validate.sh`)
-* Service principal with Contributor rights for Terraform deployment
-* Environment variables set:
-  ```
-  ARM_CLIENT_ID
-  ARM_CLIENT_SECRET
-  ARM_SUBSCRIPTION_ID
-  ARM_TENANT_ID
-  ```
+* `jq` in PATH (used by `apply.sh` and `validate.sh`)
+* `credentials.json` (GCP service account key) placed in the repo root
+* Service account needs: Cloud Functions Admin, Cloud Run Admin,
+  Cloud Build Editor, Artifact Registry Admin, IAM Admin,
+  Cloud Asset Viewer, Storage Admin, Service Account Admin,
+  Service Account Key Admin, Project IAM Admin
 
 ## Download this Repository
 
 ```bash
-git clone https://github.com/mamonaco1973/azure-serverless-mcp.git
-cd azure-serverless-mcp
+git clone https://github.com/mamonaco1973/gcp-serverless-mcp.git
+cd gcp-serverless-mcp
 ```
+
+Place your GCP service account key at `credentials.json` in the repo root.
 
 ## Build the Code
 
@@ -69,40 +68,43 @@ Run [check_env](check_env.sh) to validate your environment, then run
 [apply](apply.sh) to provision the infrastructure.
 
 ```bash
-~/azure-serverless-mcp$ ./apply.sh
+~/gcp-serverless-mcp$ ./apply.sh
 NOTE: Running environment validation...
-NOTE: az found.
+NOTE: gcloud found.
 NOTE: terraform found.
 NOTE: jq found.
-NOTE: zip found.
-NOTE: Deploying Azure Functions infrastructure...
+NOTE: Deploying GCP infrastructure...
 ...
-NOTE: Deployment complete.
+NOTE: Validation complete — all 8 endpoints returned HTTP 200.
 ```
 
 ### Build Results
 
-When the deployment completes, the following resources are created in the
-`serverless-mcp-rg` resource group:
+When the deployment completes, the following resources are created:
 
 - **Core Infrastructure:**
-  - Fully serverless — no VMs, containers, or VNet required
+  - Fully serverless — no VMs, containers, or VPC required
   - Single-phase Terraform deploy from the `01-functions` directory
-  - FC1 (Flex Consumption) service plan — scales to zero when idle
+  - Cloud Functions 2nd Gen (backed by Cloud Run) — scales to zero when idle
 
 - **Security & Auth:**
-  - `serverless-mcp-api` Entra app registration — defines the token audience
-  - `serverless-mcp-proxy` Entra service principal — identity the proxy authenticates as
-  - JWT validated in-code (RS256, Azure AD JWKS) — FC1 does not support Easy Auth
-  - Function App Managed Identity with `Reader` on the subscription for Resource Graph
+  - `serverless-mcp-func-sa` — function service account with
+    `roles/cloudasset.viewer` to query Cloud Asset Inventory
+  - `serverless-mcp-proxy-sa` — proxy service account with `roles/run.invoker`
+    on the function; key exported to `02-proxy/proxy-sa-key.json`
+  - OIDC id_token validated by Cloud Run platform — no in-code JWT validation
+    needed (unlike the Azure variant which requires in-code JWKS validation
+    due to FC1 Easy Auth limitations)
 
-- **Azure Functions:**
-  - Eight Python 3.11 handlers in a single `function_app.py`
-  - `GET /tools` — discovery endpoint; returns tool registry for proxy self-config
+- **Cloud Function Handlers:**
+  - Eight Python 3.11 handlers in a single `main.py`
+  - `GET /tools` — discovery endpoint; returns tool registry for proxy
+    self-config
   - Seven `POST /resources/*` routes — one per MCP tool
 
 - **MCP Proxy Scripts:**
-  - `02-proxy/proxy.ps1` — Windows PowerShell proxy with Bearer token management
+  - `02-proxy/proxy.ps1` — Windows PowerShell 7+ proxy with OIDC token
+    management
   - `02-proxy/proxy.sh` — Bash equivalent (Linux / macOS / Git Bash)
   - Both implement full MCP JSON-RPC 2.0 stdio transport with token caching and
     proactive refresh 60 seconds before expiry
@@ -115,32 +117,32 @@ When the deployment completes, the following resources are created in the
 
 - **Automation & Validation:**
   - `apply.sh`, `destroy.sh`, `check_env.sh`, and `validate.sh` automate the
-    full lifecycle — no manual portal steps required
+    full lifecycle — no manual console steps required
 
 ---
 
 ## MCP Tools
 
-The **Azure Resource MCP API** exposes seven tools through **Azure Functions**.
-Four tools take no input parameters; three accept parameters to filter results.
-All responses are plain-text summaries suitable for direct AI narration.
+The **GCP Resource MCP API** exposes seven tools through a single Cloud
+Function. Four tools take no input parameters; three accept parameters to
+filter results. All responses are plain-text summaries suitable for direct AI
+narration.
 
-> All routes require a valid **Entra ID Bearer token** scoped to
-> `{serverless-mcp-api-client-id}/.default`. The proxy acquires and caches this
-> token automatically.
+> All routes require a valid **GCP OIDC id_token** issued for the proxy service
+> account. The proxy acquires and caches this token automatically.
 
 ### Discovery Endpoint
 
-The proxy calls `GET /tools` at startup to self-configure. `function_app.py`
-returns `TOOL_REGISTRY` — the single source of truth for all tool metadata:
+The proxy calls `GET /tools` at startup to self-configure. `main.py` returns
+`TOOL_REGISTRY` — the single source of truth for all tool metadata:
 
 ```json
 [
   {
-    "name": "list_virtual_machines",
-    "description": "Lists all virtual machines in the subscription...",
+    "name": "list_compute_instances",
+    "description": "Lists all Compute Engine VM instances...",
     "inputSchema": { "type": "object", "properties": {}, "required": [] },
-    "route": "/resources/virtual-machines"
+    "route": "/resources/compute-instances"
   },
   ...
 ]
@@ -152,45 +154,43 @@ The proxy strips `route` before forwarding tool schemas to the AI.
 
 | Tool | Route | Input | Description |
 |------|-------|-------|-------------|
-| `list_virtual_machines` | `POST /resources/virtual-machines` | none | All VMs with name, size, resource group, location |
-| `list_resource_groups` | `POST /resources/resource-groups` | none | All resource groups with location and tag count |
-| `count_resources_by_type` | `POST /resources/count-by-type` | none | Ranked count of all resource types in the subscription |
-| `find_resources_by_tag` | `POST /resources/by-tag` | `tag_key`, `tag_value` | All resources matching a specific tag key/value pair |
-| `list_public_ip_addresses` | `POST /resources/public-ips` | none | All public IPs with allocation method and location |
-| `find_resources_by_resource_group` | `POST /resources/by-resource-group` | `resource_group` | All resources in a specific resource group |
-| `find_resources_by_region` | `POST /resources/by-region` | `region` | All resources in a specific Azure region |
+| `list_compute_instances` | `POST /resources/compute-instances` | none | All VMs with name, machine type, zone, status |
+| `list_storage_buckets` | `POST /resources/storage-buckets` | none | All GCS buckets with location and storage class |
+| `count_resources_by_type` | `POST /resources/count-by-type` | none | Ranked count of all resource types in the project |
+| `find_resources_by_label` | `POST /resources/by-label` | `label_key`, `label_value` | All resources matching a specific label key/value pair |
+| `list_static_ip_addresses` | `POST /resources/static-ips` | none | All static external IPs with address, region, status |
+| `find_resources_by_type` | `POST /resources/by-type` | `asset_type` | All resources of a specific GCP asset type |
+| `find_resources_by_region` | `POST /resources/by-region` | `region` | All resources in a specific GCP region or zone |
 
 ### Example Tool Responses
 
-**`list_resource_groups`**
+**`list_compute_instances`**
 ```
-Resource groups (4 total):
+Compute Engine instances (2 total):
 
-  serverless-mcp-rg    centralus  (2 tags)
-  NetworkWatcherRG     centralus
-  mikes-solutions-org  westus
-  youtube-tenant-rg    centralus
+  my-web-server                   n2-standard-2             us-central1-a             RUNNING
+  my-worker-vm                    e2-medium                 us-east1-b                TERMINATED
 ```
 
 **`count_resources_by_type`**
 ```
-Resources by type (11 total):
+Resources by type (14 total):
 
-      5  microsoft.network/networkwatchers
-      2  microsoft.operationalinsights/workspaces
-      1  microsoft.web/sites
-      1  microsoft.keyvault/vaults
-      1  microsoft.storage/storageaccounts
-      1  microsoft.insights/components
+      4  compute.googleapis.com/Firewall
+      2  compute.googleapis.com/Instance
+      2  storage.googleapis.com/Bucket
+      2  compute.googleapis.com/Network
+      1  cloudfunctions.googleapis.com/CloudFunction
+      ...
 ```
 
-**`find_resources_by_region`** (with `region: "centralus"`)
+**`find_resources_by_region`** (with `region: "us-central1"`)
 ```
-Resources in centralus (8 total):
+Resources in us-central1 (5 total):
 
-  serverless-mcp-ai        microsoft.insights/components    serverless-mcp-rg
-  serverless-mcp-func-xxxx microsoft.web/sites              serverless-mcp-rg
-  serverless-mcp-plan      microsoft.web/serverfarms        serverless-mcp-rg
+  serverless-mcp-func-xxxx        cloudfunctions.googleapis.com/CloudFunction  us-central1
+  my-web-server                   compute.googleapis.com/Instance              us-central1-a
+  serverless-mcp-src-xxxx         storage.googleapis.com/Bucket                us-central1
   ...
 ```
 
@@ -200,11 +200,43 @@ Resources in centralus (8 total):
 
 | Endpoint | Method | Auth | Request Body | Response |
 |----------|--------|------|--------------|----------|
-| `/tools` | `GET` | Bearer JWT | none | JSON array of tool descriptors |
-| `/resources/*` | `POST` | Bearer JWT | `{}` or `{"param": "value"}` | Plain-text human-readable summary |
+| `/tools` | `GET` | OIDC id_token | none | JSON array of tool descriptors |
+| `/resources/*` | `POST` | OIDC id_token | `{}` or `{"param": "value"}` | Plain-text human-readable summary |
 
 ---
 
 ## MCP Proxy Request Flow
 
-![flow](azure-serverless-mcp-flow.png)
+```
+① Proxy Startup — Token Acquisition
+   proxy SA key file → self-signed RS256 JWT → POST oauth2.googleapis.com/token
+   → id_token (audience = function URL)
+
+② Proxy Startup — Tool Discovery
+   GET {function_url}/tools with Bearer id_token → TOOL_REGISTRY JSON
+   → route map + tool schemas cached in memory
+
+③ AI Sends a Tool Call
+   {"method":"tools/call","params":{"name":"list_compute_instances",...}}
+
+④ Route Lookup from Cached Registry
+   "list_compute_instances" → "/resources/compute-instances"
+
+⑤ Token Check / Proactive Refresh
+   If now ≥ expiry - 60s → re-sign JWT → exchange for new id_token
+
+⑥ Send HTTPS POST to Cloud Function
+   POST {function_url}/resources/compute-instances
+   Authorization: Bearer <id_token>
+
+⑦ Cloud Run Validates OIDC Token
+   Platform-level check: signature, audience (must == function URL), expiry
+   → 403 if invalid, function runs if valid
+
+⑧ Handler Queries Cloud Asset Inventory
+   AssetServiceClient (ADC → serverless-mcp-func-sa)
+   ListAssetsRequest / SearchAllResourcesRequest → resource data
+
+⑨ Result Returns to the AI
+   Plain-text → MCP JSON-RPC content block → Claude narrates the result
+```

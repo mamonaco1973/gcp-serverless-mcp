@@ -1,28 +1,17 @@
-output "function_app_name" {
-  value = azurerm_function_app_flex_consumption.serverless_mcp.name
+output "function_url" {
+  value = google_cloudfunctions2_function.serverless_mcp.service_config[0].uri
 }
 
-output "function_app_url" {
-  value = "https://${azurerm_function_app_flex_consumption.serverless_mcp.default_hostname}/api"
+output "proxy_sa_key_json" {
+  description = "Proxy SA key JSON — written to 02-proxy/proxy-sa-key.json by apply.sh."
+  value       = base64decode(google_service_account_key.proxy.private_key)
+  sensitive   = true
 }
 
-output "resource_group_name" {
-  value = azurerm_resource_group.serverless_mcp.name
+output "proxy_sa_email" {
+  value = google_service_account.proxy.email
 }
 
-output "proxy_client_id" {
-  value = azuread_application.serverless_mcp_proxy.client_id
-}
-
-output "proxy_client_secret" {
-  value     = azuread_application_password.serverless_mcp_proxy.value
-  sensitive = true
-}
-
-output "proxy_tenant_id" {
-  value = data.azurerm_client_config.current.tenant_id
-}
-
-output "proxy_api_client_id" {
-  value = azuread_application.serverless_mcp_api.client_id
+output "project_id" {
+  value = local.project_id
 }

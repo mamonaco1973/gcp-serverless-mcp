@@ -3,95 +3,90 @@
 # File: validate.sh
 #
 # Purpose:
-#   Smoke-tests all eight Azure Resource MCP endpoints. Acquires a Bearer token
-#   as the proxy service principal and calls each route, checking for HTTP 200.
+#   Smoke-tests all eight GCP Serverless MCP endpoints. Authenticates as the
+#   proxy service account, acquires an OIDC id_token, and calls each route,
+#   checking for HTTP 200.
 # ================================================================================
 
 set -euo pipefail
 
 # ================================================================================
-# Read deployment outputs and credentials
+# Read deployment outputs
 # ================================================================================
 
 echo "NOTE: Reading deployment outputs..."
 
 cd 01-functions
-FUNC_APP_URL=$(terraform output -raw function_app_url)
-CLIENT_ID=$(terraform output -raw proxy_client_id)
-CLIENT_SECRET=$(terraform output -raw proxy_client_secret)
-TENANT_ID=$(terraform output -raw proxy_tenant_id)
-API_CLIENT_ID=$(terraform output -raw proxy_api_client_id)
+FUNCTION_URL=$(terraform output -raw function_url)
 cd ..
 
-echo "NOTE: API base URL: ${FUNC_APP_URL}"
+echo "NOTE: Function URL: ${FUNCTION_URL}"
 
 # ================================================================================
-# Acquire Bearer token
+# Acquire OIDC token via proxy SA key
+# gcloud handles the JWT signing and exchange — no manual JWT needed here.
 # ================================================================================
 
-echo "NOTE: Acquiring Bearer token..."
+echo "NOTE: Acquiring OIDC token..."
 
-token_json=$(curl -s -X POST \
-  "https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=client_credentials\
-&client_id=${CLIENT_ID}\
-&client_secret=${CLIENT_SECRET}\
-&scope=${API_CLIENT_ID}/.default" \
-  < /dev/null)
+gcloud auth activate-service-account \
+    --key-file=02-proxy/proxy-sa-key.json \
+    --quiet
 
-TOKEN=$(echo "$token_json" | jq -r '.access_token // empty')
+# --audiences must match the Cloud Run service URL for the token to be accepted.
+TOKEN=$(gcloud auth print-identity-token \
+    --audiences="$FUNCTION_URL" \
+    2>/dev/null)
 
 if [[ -z "$TOKEN" ]]; then
-  echo "ERROR: Failed to acquire token."
-  echo "$token_json" | jq .
-  exit 1
+    echo "ERROR: Failed to acquire OIDC token."
+    exit 1
 fi
 
 echo "NOTE: Token acquired."
 
 # ================================================================================
-# Helper: call one endpoint and check for 200
+# Helper: call one endpoint and check for HTTP 200
 # ================================================================================
 
 call_api() {
-  local method="$1" route="$2" body="${3:-}"
-  local tmp_file http_code response
+    local method="$1" route="$2" body="${3:-}"
+    local tmp_file http_code response
 
-  tmp_file=$(mktemp)
+    tmp_file=$(mktemp)
 
-  if [[ "$method" == "GET" ]]; then
-    http_code=$(curl -s -w "%{http_code}" -o "$tmp_file" \
-      -X GET "${FUNC_APP_URL}/${route}" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      < /dev/null)
-  else
-    http_code=$(curl -s -w "%{http_code}" -o "$tmp_file" \
-      -X POST "${FUNC_APP_URL}/${route}" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "${body:-{\}}" \
-      < /dev/null)
-  fi
-
-  response=$(cat "$tmp_file")
-  rm -f "$tmp_file"
-
-  if [[ "$http_code" == "200" ]]; then
-    echo "NOTE: OK  ${method} /${route}"
-    echo ""
-    if [[ "$route" == "tools" ]]; then
-      echo "$response" | jq -r '.[] | "\(.name)\t\(.route)"' \
-        | column -t -s $'\t' | sed 's/^/       /'
+    if [[ "$method" == "GET" ]]; then
+        http_code=$(curl -s -w "%{http_code}" -o "$tmp_file" \
+            -X GET "${FUNCTION_URL}/${route}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            < /dev/null)
     else
-      echo "$response" | sed 's/^/       /'
+        http_code=$(curl -s -w "%{http_code}" -o "$tmp_file" \
+            -X POST "${FUNCTION_URL}/${route}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${body:-{\}}" \
+            < /dev/null)
     fi
-    echo ""
-  else
-    echo "ERROR: FAIL ${method} /${route} — HTTP ${http_code}"
-    echo "  $response"
-    exit 1
-  fi
+
+    response=$(cat "$tmp_file")
+    rm -f "$tmp_file"
+
+    if [[ "$http_code" == "200" ]]; then
+        echo "NOTE: OK  ${method} /${route}"
+        echo ""
+        if [[ "$route" == "tools" ]]; then
+            echo "$response" | jq -r '.[] | "\(.name)\t\(.route)"' \
+                | column -t -s $'\t' | sed 's/^/       /'
+        else
+            echo "$response" | sed 's/^/       /'
+        fi
+        echo ""
+    else
+        echo "ERROR: FAIL ${method} /${route} — HTTP ${http_code}"
+        echo "  $response"
+        exit 1
+    fi
 }
 
 # ================================================================================
@@ -103,17 +98,17 @@ echo "NOTE: Validating all endpoints..."
 echo ""
 
 call_api "GET"  "tools"
-call_api "POST" "resources/virtual-machines"
-call_api "POST" "resources/resource-groups"
+call_api "POST" "resources/compute-instances"
+call_api "POST" "resources/storage-buckets"
 call_api "POST" "resources/count-by-type"
-call_api "POST" "resources/by-tag"   '{"tag_key":"environment","tag_value":"test"}'
-call_api "POST" "resources/public-ips"
-call_api "POST" "resources/by-resource-group" '{"resource_group":"serverless-mcp-rg"}'
-call_api "POST" "resources/by-region" '{"region":"centralus"}'
+call_api "POST" "resources/by-label"   '{"label_key":"env","label_value":"prod"}'
+call_api "POST" "resources/static-ips"
+call_api "POST" "resources/by-type"    '{"asset_type":"compute.googleapis.com/Instance"}'
+call_api "POST" "resources/by-region"  '{"region":"us-central1"}'
 
 echo ""
 echo "========================================================================"
 echo "  Validation complete — all 8 endpoints returned HTTP 200."
 echo "========================================================================"
-echo "  API: ${FUNC_APP_URL}"
+echo "  API: ${FUNCTION_URL}"
 echo "========================================================================"

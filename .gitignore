@@ -7,6 +7,8 @@
 *.pub
 *.zip
 index.html
+credentials.json
+02-proxy/proxy-sa-key.json
 02-proxy/claude_desktop_config_ps1.json
 02-proxy/claude_desktop_config_sh.json
 

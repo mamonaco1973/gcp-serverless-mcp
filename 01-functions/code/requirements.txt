@@ -1,6 +1,2 @@
-azure-functions
-azure-mgmt-resourcegraph
-azure-identity
-PyJWT
-cryptography
-requests
+functions-framework==3.*
+google-cloud-asset

@@ -1,76 +1,105 @@
-resource "azurerm_storage_account" "functions" {
-  name                     = "serverlessmcp${random_id.suffix.hex}"
-  resource_group_name      = azurerm_resource_group.serverless_mcp.name
-  location                 = azurerm_resource_group.serverless_mcp.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-  min_tls_version          = "TLS1_2"
+# ================================================================================
+# Random suffix
+# Appended to resource names that must be globally unique.
+# ================================================================================
+
+resource "random_id" "suffix" {
+  byte_length = 4
 }
 
-resource "azurerm_storage_container" "func_code" {
-  name                  = "func-code"
-  storage_account_id    = azurerm_storage_account.functions.id
-  container_access_type = "private"
+# ================================================================================
+# Service accounts
+# Two SAs: one for the function (ADC at runtime), one for the proxy (key file).
+# Separating them keeps the proxy credential out of the function's trust scope.
+# ================================================================================
+
+resource "google_service_account" "func" {
+  account_id   = "serverless-mcp-func-sa"
+  display_name = "Serverless MCP Function SA"
 }
 
-resource "azurerm_service_plan" "serverless_mcp" {
-  name                = "serverless-mcp-plan"
-  resource_group_name = azurerm_resource_group.serverless_mcp.name
-  location            = azurerm_resource_group.serverless_mcp.location
-  os_type             = "Linux"
-  sku_name            = "FC1"
+# Viewer on Cloud Asset Inventory — lets the function query all project assets.
+resource "google_project_iam_member" "func_asset_viewer" {
+  project = local.project_id
+  role    = "roles/cloudasset.viewer"
+  member  = "serviceAccount:${google_service_account.func.email}"
 }
 
-resource "azurerm_application_insights" "serverless_mcp" {
-  name                = "serverless-mcp-ai"
-  resource_group_name = azurerm_resource_group.serverless_mcp.name
-  location            = azurerm_resource_group.serverless_mcp.location
-  application_type    = "web"
+resource "google_service_account" "proxy" {
+  account_id   = "serverless-mcp-proxy-sa"
+  display_name = "Serverless MCP Proxy SA"
 }
 
-resource "azurerm_function_app_flex_consumption" "serverless_mcp" {
-  name                = "serverless-mcp-func-${random_id.suffix.hex}"
-  resource_group_name = azurerm_resource_group.serverless_mcp.name
-  location            = azurerm_resource_group.serverless_mcp.location
+# Key written to 02-proxy/proxy-sa-key.json by apply.sh; used by the proxy to
+# sign OIDC JWTs for Cloud Run invocation auth.
+resource "google_service_account_key" "proxy" {
+  service_account_id = google_service_account.proxy.name
+}
 
-  service_plan_id = azurerm_service_plan.serverless_mcp.id
-  https_only      = true
+# ================================================================================
+# Function source bucket and archive
+# ================================================================================
 
-  storage_container_type      = "blobContainer"
-  storage_container_endpoint  = "${azurerm_storage_account.functions.primary_blob_endpoint}${azurerm_storage_container.func_code.name}"
-  storage_authentication_type = "StorageAccountConnectionString"
-  storage_access_key          = azurerm_storage_account.functions.primary_access_key
+resource "google_storage_bucket" "func_source" {
+  name                        = "serverless-mcp-src-${random_id.suffix.hex}"
+  location                    = "US"
+  force_destroy               = true
+  uniform_bucket_level_access = true
+}
 
-  runtime_name    = "python"
-  runtime_version = "3.11"
+data "archive_file" "func_source" {
+  type        = "zip"
+  source_dir  = "${path.module}/code"
+  output_path = "${path.module}/func_source.zip"
+  # Content hash in the object name triggers re-deploy on any source change.
+  excludes    = ["__pycache__", "*.pyc"]
+}
 
-  maximum_instance_count = 10
-  instance_memory_in_mb  = 2048
+resource "google_storage_bucket_object" "func_source" {
+  name   = "func-${data.archive_file.func_source.output_md5}.zip"
+  bucket = google_storage_bucket.func_source.name
+  source = data.archive_file.func_source.output_path
+}
 
-  site_config {}
+# ================================================================================
+# Cloud Function (2nd Gen)
+# ================================================================================
 
-  # System-assigned identity used by the function code to query Resource Graph
-  # via DefaultAzureCredential — no credentials in app settings.
-  identity {
-    type = "SystemAssigned"
+resource "google_cloudfunctions2_function" "serverless_mcp" {
+  name     = "serverless-mcp-func-${random_id.suffix.hex}"
+  location = "us-central1"
+
+  build_config {
+    runtime     = "python311"
+    entry_point = "serverless_mcp"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.func_source.name
+        object = google_storage_bucket_object.func_source.name
+      }
+    }
   }
 
-  app_settings = {
-    FUNCTIONS_EXTENSION_VERSION           = "~4"
-    APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.serverless_mcp.connection_string
-    AzureWebJobsFeatureFlags              = "EnableWorkerIndexing"
-    SUBSCRIPTION_ID                       = data.azurerm_client_config.current.subscription_id
-    # Used by in-code JWT validation to verify token audience and issuer.
-    API_CLIENT_ID                         = azuread_application.serverless_mcp_api.client_id
-    TENANT_ID                             = data.azurerm_client_config.current.tenant_id
+  service_config {
+    service_account_email = google_service_account.func.email
+    min_instance_count    = 0
+    max_instance_count    = 10
+    available_memory      = "256M"
+    timeout_seconds       = 60
+    environment_variables = {
+      # GOOGLE_CLOUD_PROJECT is set automatically by Cloud Run, but explicit
+      # here so the value is predictable across local and deployed runs.
+      GOOGLE_CLOUD_PROJECT = local.project_id
+    }
   }
+}
 
-  lifecycle {
-    ignore_changes = [
-      app_settings["APPLICATIONINSIGHTS_CONNECTION_STRING"],
-      app_settings["FUNCTIONS_EXTENSION_VERSION"],
-      app_settings["SCM_DO_BUILD_DURING_DEPLOYMENT"],
-      site_config,
-    ]
-  }
+# Restrict invocation to the proxy SA only — the Cloud Run platform validates
+# the OIDC token before the function runs, so no in-code auth is needed.
+resource "google_cloud_run_v2_service_iam_member" "proxy_invoker" {
+  project  = local.project_id
+  location = google_cloudfunctions2_function.serverless_mcp.location
+  name     = google_cloudfunctions2_function.serverless_mcp.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.proxy.email}"
 }

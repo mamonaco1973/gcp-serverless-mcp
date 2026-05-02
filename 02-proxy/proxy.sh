@@ -3,25 +3,22 @@
 # File: proxy.sh
 #
 # Purpose:
-#   MCP stdio proxy for the Azure Resource Graph serverless API. Reads JSON-RPC
-#   2.0 messages from stdin, acquires a Bearer token from Azure AD using the
-#   client-credentials flow, and forwards tool calls to the Function App.
-#   The AI caller sees a local MCP server — the Azure backend is transparent.
+#   MCP stdio proxy for the GCP Serverless MCP API. Reads JSON-RPC 2.0 messages
+#   from stdin, acquires a GCP OIDC id_token using a service account key file,
+#   and forwards tool calls to the Cloud Function. The AI caller sees a local
+#   MCP server — the GCP backend is transparent.
 #
 #   On startup the proxy calls GET /tools (authenticated) to load the tool
 #   registry. Route mappings and tool schemas require no hardcoding here —
-#   add a tool in function_app.py and redeploy; the proxy auto-discovers it.
+#   add a tool in main.py and redeploy; the proxy auto-discovers it.
 #
 # Dependencies:
-#   bash 4+, curl, jq
+#   bash 4+, curl, jq, openssl
 #
 # Required environment variables:
-#   MCP_CLIENT_ID      Proxy service principal client ID
-#   MCP_CLIENT_SECRET  Proxy service principal client secret
-#   MCP_TENANT_ID      Azure AD tenant ID
-#   MCP_API_CLIENT_ID  API app registration client ID (used as token scope)
-#   MCP_API_ENDPOINT   Function App base URL — no trailing slash
-#                      (e.g. https://rg-mcp-func-xxxx.azurewebsites.net/api)
+#   MCP_SA_KEY_FILE  Path to the proxy service account JSON key file
+#   MCP_API_ENDPOINT Cloud Function base URL — no trailing slash
+#                    (e.g. https://serverless-mcp-func-xxxx-uc.a.run.app)
 # ================================================================================
 
 set -euo pipefail
@@ -30,42 +27,65 @@ set -euo pipefail
 # Configuration
 # ================================================================================
 
-CLIENT_ID="${MCP_CLIENT_ID:?MCP_CLIENT_ID is required}"
-CLIENT_SECRET="${MCP_CLIENT_SECRET:?MCP_CLIENT_SECRET is required}"
-TENANT_ID="${MCP_TENANT_ID:?MCP_TENANT_ID is required}"
-API_CLIENT_ID="${MCP_API_CLIENT_ID:?MCP_API_CLIENT_ID is required}"
+SA_KEY_FILE="${MCP_SA_KEY_FILE:?MCP_SA_KEY_FILE is required}"
 API_ENDPOINT="${MCP_API_ENDPOINT:?MCP_API_ENDPOINT is required}"
 MCP_USER="${USER:-$(whoami)}"
 
 # ================================================================================
 # Token management
+# GCP OIDC flow: self-signed JWT → exchange at Google token endpoint → id_token.
+# The id_token audience equals the function URL; Cloud Run validates it at the
+# platform level before the function code runs.
 # ================================================================================
 
 TOKEN=""
 TOKEN_EXPIRY=0
 
 acquire_token() {
+    local sa_email
+    sa_email=$(jq -r '.client_email' "$SA_KEY_FILE")
+
+    # Write private key to a temp file — openssl dgst -sign requires a path.
+    local tmpkey
+    tmpkey=$(mktemp /tmp/sa-key-XXXXXX.pem)
+    trap 'rm -f "$tmpkey"' RETURN
+    jq -r '.private_key' "$SA_KEY_FILE" > "$tmpkey"
+
+    local now exp
+    now=$(date +%s)
+    exp=$(( now + 3600 ))
+
+    # Base64url-encode the JWT header and payload.
+    local header payload
+    header=$(printf '{"alg":"RS256","typ":"JWT"}' | \
+        openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+    payload=$(printf \
+        '{"iss":"%s","sub":"%s","aud":"https://oauth2.googleapis.com/token","iat":%d,"exp":%d,"target_audience":"%s"}' \
+        "$sa_email" "$sa_email" "$now" "$exp" "$API_ENDPOINT" | \
+        openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+
+    local signing_input="$header.$payload"
+    local signature
+    signature=$(printf '%s' "$signing_input" | \
+        openssl dgst -sha256 -sign "$tmpkey" | \
+        openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+
+    local assertion="$signing_input.$signature"
+
     local response
-    # Redirect curl stdin so it does not consume MCP messages from stdin.
-    response=$(curl -s -X POST \
-        "https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "grant_type=client_credentials\
-&client_id=${CLIENT_ID}\
-&client_secret=${CLIENT_SECRET}\
-&scope=${API_CLIENT_ID}/.default" \
+    response=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+        --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+        --data-urlencode "assertion=${assertion}" \
         < /dev/null)
 
-    TOKEN=$(echo "$response" | jq -r '.access_token // empty')
+    TOKEN=$(echo "$response" | jq -r '.id_token // empty')
     if [[ -z "$TOKEN" ]]; then
         echo "ERROR: Token acquisition failed: $(echo "$response" | jq -r '.error_description // .')" >&2
         exit 1
     fi
 
-    local expires_in
-    expires_in=$(echo "$response" | jq -r '.expires_in // 3600')
-    # Refresh 60 seconds before actual expiry to avoid mid-call failures.
-    TOKEN_EXPIRY=$(( $(date +%s) + expires_in - 60 ))
+    # id_tokens are valid for 1 hour; refresh 60 seconds before expiry.
+    TOKEN_EXPIRY=$(( now + 3600 - 60 ))
 }
 
 ensure_token() {
@@ -123,7 +143,6 @@ load_tool_registry() {
         exit 1
     fi
 
-    # Populate route map from the registry.
     while IFS= read -r entry; do
         local name route
         name=$(echo "$entry"  | jq -r '.name')
@@ -165,7 +184,7 @@ handle_initialize() {
     result=$(jq -cn '{
         "protocolVersion": "2025-11-25",
         "capabilities": {"tools": {}},
-        "serverInfo": {"name": "azure-resource-mcp", "version": "1.0.0"}
+        "serverInfo": {"name": "gcp-resource-mcp", "version": "1.0.0"}
     }')
     send_response "$id" "$result"
 }
@@ -213,7 +232,7 @@ handle_tools_call() {
 # Main
 # ================================================================================
 
-echo "NOTE: Azure Resource MCP proxy started." >&2
+echo "NOTE: GCP Resource MCP proxy started." >&2
 echo "NOTE: Endpoint: ${API_ENDPOINT}" >&2
 
 load_tool_registry
