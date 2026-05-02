@@ -20,6 +20,7 @@ from collections import Counter
 
 import functions_framework
 from google.cloud import asset_v1
+from google.cloud import storage as gcs
 from google.protobuf.json_format import MessageToDict
 
 # ================================================================================
@@ -28,8 +29,9 @@ from google.protobuf.json_format import MessageToDict
 # every request. ADC resolves to the function's service account at runtime.
 # ================================================================================
 
-PROJECT_ID    = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-_asset_client = None
+PROJECT_ID      = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+_asset_client   = None
+_storage_client = None
 
 
 def _get_client() -> asset_v1.AssetServiceClient:
@@ -37,6 +39,13 @@ def _get_client() -> asset_v1.AssetServiceClient:
     if _asset_client is None:
         _asset_client = asset_v1.AssetServiceClient()
     return _asset_client
+
+
+def _get_storage_client() -> gcs.Client:
+    global _storage_client
+    if _storage_client is None:
+        _storage_client = gcs.Client()
+    return _storage_client
 
 
 # ================================================================================
@@ -141,6 +150,55 @@ TOOL_REGISTRY = [
             "required": ["region"],
         },
         "route": "/resources/by-region",
+    },
+    {
+        "name": "describe_resource",
+        "description": (
+            "Returns detailed information about a specific GCP resource by "
+            "name or display name, including full configuration data."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "resource_name": {
+                    "type": "string",
+                    "description": (
+                        "Display name or partial name of the resource "
+                        "to look up, e.g. 'serverless-mcp-func'"
+                    ),
+                },
+            },
+            "required": ["resource_name"],
+        },
+        "route": "/resources/describe",
+    },
+    {
+        "name": "list_cloud_functions_detail",
+        "description": (
+            "Lists all Cloud Functions in the project with full configuration: "
+            "runtime, memory, timeout, trigger URL, service account, "
+            "environment variables, and instance limits."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "route": "/resources/cloud-functions",
+    },
+    {
+        "name": "list_bucket_objects",
+        "description": (
+            "Lists all objects in a specific Cloud Storage bucket "
+            "with name, size, and last-modified timestamp."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bucket_name": {
+                    "type": "string",
+                    "description": "Name of the Cloud Storage bucket",
+                },
+            },
+            "required": ["bucket_name"],
+        },
+        "route": "/resources/bucket-objects",
     },
 ]
 
@@ -263,6 +321,9 @@ def serverless_mcp(request):
         "resources/static-ips":         list_static_ip_addresses,
         "resources/by-type":            find_resources_by_type,
         "resources/by-region":          find_resources_by_region,
+        "resources/describe":           describe_resource,
+        "resources/cloud-functions":    list_cloud_functions_detail,
+        "resources/bucket-objects":     list_bucket_objects,
     }
 
     handler = routes.get(path)
@@ -528,4 +589,187 @@ def find_resources_by_region(request):
         return _text_resp("\n".join(lines))
     except Exception as exc:
         logging.error("find_resources_by_region: %s", exc)
+        return _error_resp(exc)
+
+
+def describe_resource(request):
+    """Return detailed information about a GCP resource by name.
+
+    Searches Cloud Asset Inventory by the given name, then fetches the full
+    resource configuration for each match.
+
+    Args:
+        request: HTTP request with JSON body containing resource_name.
+
+    Returns:
+        Plain-text summary with search metadata and full configuration JSON
+        for each matching resource. HTTP 400 if resource_name is missing.
+    """
+    try:
+        body          = _get_body(request)
+        resource_name = str(body.get("resource_name", "")).strip()
+        if not resource_name:
+            return (
+                "resource_name is required",
+                400,
+                {"Content-Type": "text/plain"},
+            )
+
+        results = _search_resources(query=resource_name)
+        if not results:
+            return _text_resp(
+                f"No resources found matching '{resource_name}'."
+            )
+
+        lines = [
+            f"Found {len(results)} resource(s) matching '{resource_name}':",
+            "",
+        ]
+
+        for r in results:
+            display = r.display_name or r.name.split("/")[-1]
+            lines.append(f"  {'─' * 68}")
+            lines.append(f"  Resource:  {display}")
+            lines.append(f"  Full Name: {r.name}")
+            lines.append(f"  Type:      {r.asset_type}")
+            lines.append(f"  Location:  {r.location or 'global'}")
+            if r.state:
+                lines.append(f"  State:     {r.state}")
+            lines.append(f"  Project:   {r.project}")
+            if r.labels:
+                labels = ", ".join(f"{k}={v}" for k, v in r.labels.items())
+                lines.append(f"  Labels:    {labels}")
+            if r.create_time:
+                lines.append(f"  Created:   {r.create_time}")
+            if r.update_time:
+                lines.append(f"  Updated:   {r.update_time}")
+
+            # Fetch full resource.data for this asset type and match by name.
+            try:
+                full_assets = _list_assets([r.asset_type])
+                for a in full_assets:
+                    if a.name == r.name:
+                        data        = _to_dict(a.resource.data)
+                        config_json = json.dumps(data, indent=4, default=str)
+                        lines.append("")
+                        lines.append("  Full Configuration:")
+                        for cfg_line in config_json.splitlines():
+                            lines.append(f"    {cfg_line}")
+                        break
+            except Exception:
+                pass
+
+            lines.append("")
+
+        return _text_resp("\n".join(lines))
+    except Exception as exc:
+        logging.error("describe_resource: %s", exc)
+        return _error_resp(exc)
+
+
+def list_cloud_functions_detail(request):
+    """List all Cloud Functions with full configuration detail.
+
+    Args:
+        request: The incoming HTTP request (body ignored).
+
+    Returns:
+        Plain-text summary per function: runtime, entry point, memory,
+        timeout, instance limits, service account, trigger URL, and
+        environment variables.
+    """
+    try:
+        assets = _list_assets(["cloudfunctions.googleapis.com/Function"])
+        lines  = [f"Cloud Functions ({len(assets)} total):", ""]
+
+        for asset in assets:
+            data           = _to_dict(asset.resource.data)
+            build_config   = data.get("buildConfig")   or {}
+            service_config = data.get("serviceConfig") or {}
+
+            name        = data.get("name", asset.name).split("/")[-1]
+            state       = data.get("state",       "UNKNOWN")
+            runtime     = build_config.get("runtime",    "unknown")
+            entry_point = build_config.get("entryPoint", "unknown")
+            memory      = service_config.get("availableMemory",   "unknown")
+            timeout     = service_config.get("timeoutSeconds",    "unknown")
+            min_inst    = service_config.get("minInstanceCount",  0)
+            max_inst    = service_config.get("maxInstanceCount",  "unlimited")
+            sa          = service_config.get("serviceAccountEmail", "unknown")
+            uri         = service_config.get("uri",               "unknown")
+            env_vars    = service_config.get("environmentVariables") or {}
+            updated     = data.get("updateTime", "unknown")
+
+            lines.append(f"  Name:          {name}")
+            lines.append(f"  State:         {state}")
+            lines.append(f"  Runtime:       {runtime}")
+            lines.append(f"  Entry Point:   {entry_point}")
+            lines.append(f"  Memory:        {memory}")
+            lines.append(f"  Timeout:       {timeout}s")
+            lines.append(f"  Min Instances: {min_inst}")
+            lines.append(f"  Max Instances: {max_inst}")
+            lines.append(f"  Service SA:    {sa}")
+            lines.append(f"  Trigger URL:   {uri}")
+            if env_vars:
+                lines.append(f"  Env Vars:")
+                for k, v in env_vars.items():
+                    lines.append(f"    {k} = {v}")
+            lines.append(f"  Last Updated:  {updated}")
+            lines.append("")
+
+        if not assets:
+            lines.append("  (none found)")
+
+        return _text_resp("\n".join(lines))
+    except Exception as exc:
+        logging.error("list_cloud_functions_detail: %s", exc)
+        return _error_resp(exc)
+
+
+def list_bucket_objects(request):
+    """List all objects in a Cloud Storage bucket.
+
+    Args:
+        request: HTTP request with JSON body containing bucket_name.
+
+    Returns:
+        Plain-text list of objects with name, size, and last-modified time.
+        HTTP 400 if bucket_name is missing.
+    """
+    try:
+        body        = _get_body(request)
+        bucket_name = str(body.get("bucket_name", "")).strip()
+        if not bucket_name:
+            return (
+                "bucket_name is required",
+                400,
+                {"Content-Type": "text/plain"},
+            )
+
+        client = _get_storage_client()
+        blobs  = list(client.list_blobs(bucket_name))
+
+        lines = [f"Objects in gs://{bucket_name} ({len(blobs)} total):", ""]
+        for blob in blobs:
+            size = blob.size or 0
+            if size >= 1024 * 1024:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            elif size >= 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size} B"
+            updated = (
+                blob.updated.strftime("%Y-%m-%d %H:%M UTC")
+                if blob.updated else "unknown"
+            )
+            lines.append(
+                f"  {blob.name:<55}  {size_str:>10}  {updated}"
+            )
+
+        if not blobs:
+            lines.append("  (bucket is empty)")
+
+        return _text_resp("\n".join(lines))
+    except Exception as exc:
+        logging.error("list_bucket_objects: %s", exc)
         return _error_resp(exc)

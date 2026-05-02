@@ -18,6 +18,7 @@ echo "NOTE: Reading deployment outputs..."
 
 cd 01-functions
 FUNCTION_URL=$(terraform output -raw function_url)
+SOURCE_BUCKET=$(terraform output -raw source_bucket_name)
 cd ..
 
 echo "NOTE: Function URL: ${FUNCTION_URL}"
@@ -141,10 +142,13 @@ call_api "POST" "resources/by-label"   '{"label_key":"env","label_value":"prod"}
 call_api "POST" "resources/static-ips"
 call_api "POST" "resources/by-type"    '{"asset_type":"compute.googleapis.com/Instance"}'
 call_api "POST" "resources/by-region"  '{"region":"us-central1"}'
+call_api "POST" "resources/describe"        '{"resource_name":"serverless-mcp-func"}'
+call_api "POST" "resources/cloud-functions"
+call_api "POST" "resources/bucket-objects"  "{\"bucket_name\":\"${SOURCE_BUCKET}\}"
 
 echo ""
 echo "========================================================================"
-echo "  Validation complete — all 8 endpoints returned HTTP 200."
+echo "  Validation complete — all 11 endpoints returned HTTP 200."
 echo "========================================================================"
 echo "  API: ${FUNCTION_URL}"
 echo "========================================================================"

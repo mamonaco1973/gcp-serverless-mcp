@@ -25,6 +25,13 @@ resource "google_project_iam_member" "func_asset_viewer" {
   member  = "serviceAccount:${google_service_account.func.email}"
 }
 
+# Object viewer — lets the function list and read GCS bucket contents.
+resource "google_project_iam_member" "func_storage_viewer" {
+  project = local.project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${google_service_account.func.email}"
+}
+
 resource "google_service_account" "proxy" {
   account_id   = "serverless-mcp-proxy-sa"
   display_name = "Serverless MCP Proxy SA"

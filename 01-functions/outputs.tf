@@ -15,3 +15,7 @@ output "proxy_sa_email" {
 output "project_id" {
   value = local.project_id
 }
+
+output "source_bucket_name" {
+  value = google_storage_bucket.func_source.name
+}

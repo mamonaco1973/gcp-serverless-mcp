@@ -18,7 +18,6 @@ cd 01-functions
 terraform init -upgrade
 # Run twice — dependency ordering occasionally requires a second pass.
 terraform destroy -auto-approve || true
-terraform destroy -auto-approve || true
 cd ..
 
 # Remove generated files that contain credentials or deployment-specific paths.
