@@ -211,36 +211,4 @@ Resources in us-central1 (5 total):
 
 ## MCP Proxy Request Flow
 
-```
-① Proxy Startup — Token Acquisition
-   proxy SA key file → self-signed RS256 JWT → POST oauth2.googleapis.com/token
-   → id_token (audience = function URL)
-
-② Proxy Startup — Tool Discovery
-   GET {function_url}/tools with Bearer id_token → TOOL_REGISTRY JSON
-   → route map + tool schemas cached in memory
-
-③ AI Sends a Tool Call
-   {"method":"tools/call","params":{"name":"list_compute_instances",...}}
-
-④ Route Lookup from Cached Registry
-   "list_compute_instances" → "/resources/compute-instances"
-
-⑤ Token Check / Proactive Refresh
-   If now ≥ expiry - 60s → re-sign JWT → exchange for new id_token
-
-⑥ Send HTTPS POST to Cloud Function
-   POST {function_url}/resources/compute-instances
-   Authorization: Bearer <id_token>
-
-⑦ Cloud Run Validates OIDC Token
-   Platform-level check: signature, audience (must == function URL), expiry
-   → 403 if invalid, function runs if valid
-
-⑧ Handler Queries Cloud Asset Inventory
-   AssetServiceClient (ADC → serverless-mcp-func-sa)
-   ListAssetsRequest / SearchAllResourcesRequest → resource data
-
-⑨ Result Returns to the AI
-   Plain-text → MCP JSON-RPC content block → Claude narrates the result
-```
+![flow](gcp-serverless-mcp-flow.png)

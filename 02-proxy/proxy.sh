@@ -48,7 +48,6 @@ acquire_token() {
     # Write private key to a temp file — openssl dgst -sign requires a path.
     local tmpkey
     tmpkey=$(mktemp /tmp/sa-key-XXXXXX.pem)
-    trap 'rm -f "$tmpkey"' RETURN
     jq -r '.private_key' "$SA_KEY_FILE" > "$tmpkey"
 
     local now exp
@@ -69,6 +68,9 @@ acquire_token() {
     signature=$(printf '%s' "$signing_input" | \
         openssl dgst -sha256 -sign "$tmpkey" | \
         openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+
+    # Key file is no longer needed after signing.
+    rm -f "$tmpkey"
 
     local assertion="$signing_input.$signature"
 
