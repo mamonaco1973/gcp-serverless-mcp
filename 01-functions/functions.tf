@@ -94,12 +94,12 @@ resource "google_cloudfunctions2_function" "serverless_mcp" {
   }
 }
 
-# Restrict invocation to the proxy SA only — the Cloud Run platform validates
-# the OIDC token before the function runs, so no in-code auth is needed.
-resource "google_cloud_run_v2_service_iam_member" "proxy_invoker" {
-  project  = local.project_id
-  location = google_cloudfunctions2_function.serverless_mcp.location
-  name     = google_cloudfunctions2_function.serverless_mcp.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.proxy.email}"
+# Restrict invocation to the proxy SA only — CF2 checks its own IAM layer
+# before Cloud Run; cloudfunctions.invoker is the canonical role for CF2.
+resource "google_cloudfunctions2_function_iam_member" "proxy_invoker" {
+  project        = local.project_id
+  location       = google_cloudfunctions2_function.serverless_mcp.location
+  cloud_function = google_cloudfunctions2_function.serverless_mcp.name
+  role           = "roles/cloudfunctions.invoker"
+  member         = "serviceAccount:${google_service_account.proxy.email}"
 }
