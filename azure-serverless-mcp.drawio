@@ -1,0 +1,62 @@
+<mxfile host="app.diagrams.net" agent="Claude">
+  <diagram id="arch" name="Architecture">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1169" pageHeight="827" background="none" math="0" shadow="1">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="local-zone" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;dashed=1;arcSize=3;verticalAlign=top;fontSize=12;fontStyle=1;fontColor=#555555;" value="&lt;font style=&quot;font-size: 16px; color: light-dark(rgb(0, 0, 0), rgb(237, 237, 237));&quot;&gt;Local Machine&lt;/font&gt;" vertex="1">
+          <mxGeometry height="502" width="175" x="25" y="108" as="geometry" />
+        </mxCell>
+        <mxCell id="azure-zone" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#0078d4;dashed=1;arcSize=2;noLabel=1;" value="" vertex="1">
+          <mxGeometry height="500" width="805" x="255" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="azure-cloud-label" parent="1" style="image;aspect=fixed;html=1;points=[];align=left;fontSize=16;image=img/lib/azure2/other/Azure_A.svg;labelBackgroundColor=none;labelPosition=right;verticalLabelPosition=middle;verticalAlign=middle;spacing=8;fontColor=light-dark(#000000, #3fa6f5);textShadow=1;" value="Azure Cloud — Central US" vertex="1">
+          <mxGeometry height="26" width="27.5" x="255" y="84" as="geometry" />
+        </mxCell>
+        <mxCell id="claude-desktop" parent="1" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=15;image=img/lib/azure2/general/Browser.svg;labelBackgroundColor=none;labelPosition=center;verticalLabelPosition=top;verticalAlign=bottom;" value="Claude Desktop" vertex="1">
+          <mxGeometry height="65.79" width="75" x="75" y="175" as="geometry" />
+        </mxCell>
+        <mxCell id="proxy" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e3a5f;strokeColor=#4a90d9;fontColor=#ffffff;fontSize=11;align=center;" value="&lt;b&gt;&lt;font style=&quot;font-size: 15px;&quot;&gt;MCP Proxy&lt;/font&gt;&lt;/b&gt;&lt;div&gt;&lt;font style=&quot;font-size: 15px;&quot;&gt;proxy.ps1 / proxy.sh&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font style=&quot;font-size: 15px;&quot;&gt;Bearer token&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="150" x="37.5" y="343" as="geometry" />
+        </mxCell>
+        <mxCell id="entra-sp" parent="1" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=15;image=img/lib/azure2/other/Entra_Identity.svg;labelBackgroundColor=none;verticalLabelPosition=bottom;verticalAlign=top;textShadow=1;" value="Entra Service Principal&lt;div&gt;client credentials&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="75" x="75" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="entra-jwks" parent="1" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=16;image=img/lib/azure2/other/Entra_Identity.svg;labelBackgroundColor=none;verticalLabelPosition=bottom;verticalAlign=top;textShadow=1;" value="Entra ID&lt;div&gt;JWT / JWKS&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="75" x="515" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="func-app" parent="1" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=16;image=img/lib/azure2/compute/Function_Apps.svg;labelBackgroundColor=none;verticalLabelPosition=bottom;verticalAlign=top;textShadow=1;" value="serverless-mcp-func-*&lt;div&gt;Azure Functions (FC1)&lt;/div&gt;&lt;div&gt;7 MCP handlers · Python 3.11&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="75" x="515" y="340" as="geometry" />
+        </mxCell>
+        <mxCell id="resource-graph" parent="1" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=16;image=img/lib/azure2/management_governance/Resource_Graph_Explorer.svg;labelBackgroundColor=none;verticalLabelPosition=bottom;verticalAlign=top;textShadow=1;" value="Azure Resource Graph&lt;div&gt;KQL · all resources&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="75" x="880" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="app-insights" parent="1" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=16;image=img/lib/azure2/devops/Application_Insights.svg;labelBackgroundColor=none;verticalLabelPosition=bottom;verticalAlign=top;textShadow=1;" value="Application Insights&lt;div&gt;audit logs&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="75" x="880" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="e-cd-proxy" edge="1" parent="1" source="claude-desktop" style="endArrow=classic;startArrow=classic;startFill=1;html=1;rounded=0;dashed=1;labelBackgroundColor=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;textShadow=1;fontSize=15;" target="proxy" value="JSON-RPC / stdio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-proxy-func" edge="1" parent="1" source="proxy" style="endArrow=classic;startArrow=none;html=1;rounded=0;dashed=1;labelBackgroundColor=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;spacingTop=-44;textShadow=1;fontSize=15;" target="func-app" value="&lt;font&gt;HTTPS&lt;/font&gt;&lt;div&gt;&lt;font&gt;Bearer token&lt;/font&gt;&lt;/div&gt;">
+          <mxGeometry relative="1" x="0.0006" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-proxy-sp" edge="1" parent="1" source="proxy" style="endArrow=classic;startArrow=classic;startFill=1;html=1;rounded=0;dashed=1;labelBackgroundColor=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;textShadow=1;" target="entra-sp" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-func-entra" edge="1" parent="1" source="func-app" style="endArrow=classic;startArrow=none;html=1;rounded=0;dashed=1;labelBackgroundColor=none;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;textShadow=1;fontSize=15;" target="entra-jwks" value="JWKS verify">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-func-rg" edge="1" parent="1" source="func-app" style="endArrow=classic;startArrow=classic;startFill=1;html=1;rounded=0;dashed=1;labelBackgroundColor=none;textShadow=1;fontSize=15;" target="resource-graph" value="Managed Identity">
+          <mxGeometry relative="1" x="0.0034" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-func-ai" edge="1" parent="1" source="func-app" style="endArrow=classic;startArrow=none;html=1;rounded=0;dashed=1;labelBackgroundColor=none;textShadow=1;" target="app-insights" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

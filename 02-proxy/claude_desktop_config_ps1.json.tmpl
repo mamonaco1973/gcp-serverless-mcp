@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "azure-cost-mcp": {
+      "command": "powershell",
+      "args": ["-File", "REPLACE_WITH_ABSOLUTE_PATH\\azure-serverless-mcp\\02-proxy\\proxy.ps1"],
+      "env": {
+        "MCP_CLIENT_ID":     "${MCP_CLIENT_ID}",
+        "MCP_CLIENT_SECRET": "${MCP_CLIENT_SECRET}",
+        "MCP_TENANT_ID":     "${MCP_TENANT_ID}",
+        "MCP_API_CLIENT_ID": "${MCP_API_CLIENT_ID}",
+        "MCP_API_ENDPOINT":  "${MCP_API_ENDPOINT}"
+      }
+    }
+  }
+}

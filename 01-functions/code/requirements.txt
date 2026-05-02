@@ -1,0 +1,6 @@
+azure-functions
+azure-mgmt-resourcegraph
+azure-identity
+PyJWT
+cryptography
+requests

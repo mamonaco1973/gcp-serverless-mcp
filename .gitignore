@@ -1,0 +1,12 @@
+.terraform
+*.tfstate
+*.tfstate.backup
+*.terraform.lock.hcl
+*.terraform.*
+*.pem
+*.pub
+*.zip
+index.html
+02-proxy/claude_desktop_config_ps1.json
+02-proxy/claude_desktop_config_sh.json
+

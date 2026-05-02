@@ -1,0 +1,115 @@
+<mxfile host="app.diagrams.net" agent="Claude">
+  <diagram id="proxy-flow" name="Proxy Flow">
+    <mxGraphModel grid="1" page="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="950" pageHeight="1900" math="0" shadow="1">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="155" width="750" x="75" y="82" as="geometry" />
+        </mxCell>
+        <mxCell id="s1n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#b85450;strokeColor=#b85450;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="①" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="97" as="geometry" />
+        </mxCell>
+        <mxCell id="s1t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Proxy Startup — Token Acquisition&lt;/b&gt; &lt;i&gt;(runs once, before the MCP loop starts)&lt;/i&gt;&lt;br&gt;The proxy calls the Entra ID token endpoint using the client credentials flow:&lt;br&gt;&lt;tt&gt;POST https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token&lt;/tt&gt;&lt;br&gt;&lt;tt&gt;grant_type=client_credentials &amp;nbsp; client_id={MCP_CLIENT_ID} &amp;nbsp; scope={MCP_API_CLIENT_ID}/.default&lt;/tt&gt;&lt;br&gt;Entra returns a Bearer token (RS256 JWT, typically valid for 3600 seconds). The proxy caches it&lt;br&gt;and records its expiry timestamp minus 60 seconds for proactive refresh." vertex="1">
+          <mxGeometry height="140" width="657" x="158" y="92" as="geometry" />
+        </mxCell>
+        <mxCell id="a12" edge="1" parent="1" source="s1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="145" width="750" x="75" y="267" as="geometry" />
+        </mxCell>
+        <mxCell id="s2n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#6c8ebf;strokeColor=#6c8ebf;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="②" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="282" as="geometry" />
+        </mxCell>
+        <mxCell id="s2t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Proxy Startup — Tool Discovery&lt;/b&gt; &lt;i&gt;(runs once, immediately after token acquisition)&lt;/i&gt;&lt;br&gt;The proxy calls &lt;tt&gt;GET /tools&lt;/tt&gt; with the Bearer token. Azure Functions validates the JWT and returns&lt;br&gt;&lt;tt&gt;TOOL_REGISTRY&lt;/tt&gt; from &lt;tt&gt;function_app.py&lt;/tt&gt; as a JSON array. Each entry includes &lt;tt&gt;name&lt;/tt&gt;, &lt;tt&gt;description&lt;/tt&gt;,&lt;br&gt;&lt;tt&gt;inputSchema&lt;/tt&gt;, and a &lt;tt&gt;route&lt;/tt&gt; field used for dispatch. The proxy builds its route map and strips&lt;br&gt;&lt;tt&gt;route&lt;/tt&gt; before advertising tools to the AI. No tool definitions are hardcoded — add a tool in&lt;br&gt;&lt;tt&gt;function_app.py&lt;/tt&gt;, redeploy, and the proxy picks it up automatically on next start." vertex="1">
+          <mxGeometry height="130" width="657" x="158" y="277" as="geometry" />
+        </mxCell>
+        <mxCell id="a23" edge="1" parent="1" source="s2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="115" width="750" x="75" y="442" as="geometry" />
+        </mxCell>
+        <mxCell id="s3n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d6b656;strokeColor=#d6b656;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="③" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="457" as="geometry" />
+        </mxCell>
+        <mxCell id="s3t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;AI Sends a Tool Call&lt;/b&gt;&lt;br&gt;Claude Desktop sends a JSON-RPC 2.0 message over stdio to the proxy process:&lt;br&gt;&lt;tt&gt;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;list_resource_groups&quot;,&quot;arguments&quot;:{}}}&lt;/tt&gt;&lt;br&gt;The proxy reads one newline-delimited JSON message at a time from stdin. Notifications (no id) are silently discarded." vertex="1">
+          <mxGeometry height="100" width="657" x="158" y="452" as="geometry" />
+        </mxCell>
+        <mxCell id="a34" edge="1" parent="1" source="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="115" width="750" x="75" y="587" as="geometry" />
+        </mxCell>
+        <mxCell id="s4n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#6c8ebf;strokeColor=#6c8ebf;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="④" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="602" as="geometry" />
+        </mxCell>
+        <mxCell id="s4t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Route Lookup from Cached Registry&lt;/b&gt;&lt;br&gt;The proxy looks up the tool name in the route map built at startup:&lt;br&gt;&lt;tt&gt;list_resource_groups → /resources/resource-groups&lt;/tt&gt;&lt;br&gt;If the name is unknown, the proxy writes a JSON-RPC error (-32602) to stdout without making any&lt;br&gt;HTTP request. No network call is made until the route is confirmed." vertex="1">
+          <mxGeometry height="100" width="657" x="158" y="597" as="geometry" />
+        </mxCell>
+        <mxCell id="a45" edge="1" parent="1" source="s4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="130" width="750" x="75" y="732" as="geometry" />
+        </mxCell>
+        <mxCell id="s5n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d6b656;strokeColor=#d6b656;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="⑤" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="747" as="geometry" />
+        </mxCell>
+        <mxCell id="s5t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Token Check / Proactive Refresh&lt;/b&gt;&lt;br&gt;Before making the HTTP call the proxy checks if the cached Bearer token expires within 60 seconds.&lt;br&gt;If so, it re-acquires a fresh token from Entra ID using the same client credentials flow as step ①.&lt;br&gt;The 60-second buffer accounts for clock skew and network latency to Entra — preventing a 401&lt;br&gt;mid-call during a long AI session. If the token is still valid, this step is a no-op." vertex="1">
+          <mxGeometry height="115" width="657" x="158" y="742" as="geometry" />
+        </mxCell>
+        <mxCell id="a56" edge="1" parent="1" source="s5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="140" width="750" x="75" y="892" as="geometry" />
+        </mxCell>
+        <mxCell id="s6n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#82b366;strokeColor=#82b366;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="⑥" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="907" as="geometry" />
+        </mxCell>
+        <mxCell id="s6t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Send HTTPS POST to Azure Functions&lt;/b&gt;&lt;br&gt;The proxy issues: &lt;tt&gt;POST https://{func-app}.azurewebsites.net/api/resources/resource-groups&lt;/tt&gt;&lt;br&gt;with headers: &lt;tt&gt;Authorization: Bearer &lt;token&gt; &amp;nbsp; Content-Type: application/json &amp;nbsp; x-mcp-user: mike&lt;/tt&gt;&lt;br&gt;Body: &lt;tt&gt;{}&lt;/tt&gt; for parameter-free tools, or &lt;tt&gt;{&quot;tag_key&quot;:&quot;env&quot;,&quot;tag_value&quot;:&quot;prod&quot;}&lt;/tt&gt; for parameterized tools.&lt;br&gt;The Bearer token is attached as-is — no signing computation required. The &lt;b&gt;x-mcp-user&lt;/b&gt; header carries&lt;br&gt;the OS username and is written to the audit log by the handler." vertex="1">
+          <mxGeometry height="125" width="657" x="158" y="902" as="geometry" />
+        </mxCell>
+        <mxCell id="a67" edge="1" parent="1" source="s6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="150" width="750" x="75" y="1062" as="geometry" />
+        </mxCell>
+        <mxCell id="s7n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d79b00;strokeColor=#d79b00;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="⑦" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="1077" as="geometry" />
+        </mxCell>
+        <mxCell id="s7t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Azure Functions Validates JWT In-Code&lt;/b&gt;&lt;br&gt;Every handler calls &lt;tt&gt;_validate_token(req)&lt;/tt&gt; before any query runs. The &lt;tt&gt;kid&lt;/tt&gt; claim from the token&lt;br&gt;header is matched against the public keys from Azure AD&apos;s JWKS endpoint (cached per warm instance):&lt;br&gt;&lt;tt&gt;https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys&lt;/tt&gt;&lt;br&gt;PyJWT verifies the RS256 signature, checks &lt;tt&gt;audience == API_CLIENT_ID&lt;/tt&gt;, and enforces expiry.&lt;br&gt;FC1 (Flex Consumption) does not support Easy Auth — in-code validation is the equivalent alternative.&lt;br&gt;Any failure returns &lt;b&gt;401 Unauthorized&lt;/b&gt; and no Resource Graph query is attempted." vertex="1">
+          <mxGeometry height="135" width="657" x="158" y="1072" as="geometry" />
+        </mxCell>
+        <mxCell id="a78" edge="1" parent="1" source="s7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="155" width="750" x="75" y="1242" as="geometry" />
+        </mxCell>
+        <mxCell id="s8n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#9673a6;strokeColor=#9673a6;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="⑧" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="1257" as="geometry" />
+        </mxCell>
+        <mxCell id="s8t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Handler Runs — Queries Azure Resource Graph&lt;/b&gt;&lt;br&gt;The matched handler executes (e.g. &lt;tt&gt;rgs_handler&lt;/tt&gt;). First: audit log to Application Insights:&lt;br&gt;&lt;tt&gt;AUDIT tool=list_resource_groups caller=mike&lt;/tt&gt;&lt;br&gt;Then &lt;tt&gt;_rg_query()&lt;/tt&gt; submits a KQL query to Azure Resource Graph via &lt;tt&gt;DefaultAzureCredential&lt;/tt&gt;,&lt;br&gt;which resolves to the Function App&apos;s System-Assigned Managed Identity at runtime. The Managed Identity&lt;br&gt;holds &lt;b&gt;Reader&lt;/b&gt; on the subscription — no credentials appear in code or app settings.&lt;br&gt;Results use &lt;tt&gt;objectArray&lt;/tt&gt; format (plain dicts, no column-index lookup) and are formatted as plain text:&lt;br&gt;&lt;i&gt;&quot;Resource groups (4 total):\n\n  serverless-mcp-rg  centralus  (2 tags)...&quot;&lt;/i&gt;" vertex="1">
+          <mxGeometry height="140" width="657" x="158" y="1252" as="geometry" />
+        </mxCell>
+        <mxCell id="a89" edge="1" parent="1" source="s8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="s9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;arcSize=4;" value="" vertex="1">
+          <mxGeometry height="135" width="750" x="75" y="1427" as="geometry" />
+        </mxCell>
+        <mxCell id="s9n" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#82b366;strokeColor=#82b366;fontSize=26;fontStyle=1;fontColor=#ffffff;align=center;verticalAlign=middle;" value="⑨" vertex="1">
+          <mxGeometry height="56" width="56" x="90" y="1442" as="geometry" />
+        </mxCell>
+        <mxCell id="s9t" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Result Returns to the AI&lt;/b&gt;&lt;br&gt;The plain-text response body travels back through Azure Functions to the proxy. The proxy wraps it&lt;br&gt;as an MCP content block and writes the JSON-RPC response to stdout:&lt;br&gt;&lt;tt&gt;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;result&quot;:{&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;Resource groups (4 total)...&quot;}]}}&lt;/tt&gt;&lt;br&gt;Claude Desktop reads the response, and Claude narrates the result directly to the user.&lt;br&gt;The Azure Functions backend is completely transparent — the AI sees only a local MCP tool call." vertex="1">
+          <mxGeometry height="120" width="657" x="158" y="1437" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
