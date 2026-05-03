@@ -2,15 +2,29 @@
 # File: main.py
 #
 # Purpose:
-#   Seven Cloud Function HTTP handlers exposing an MCP-compatible resource
-#   inventory API backed by GCP Cloud Asset Inventory. Authentication is
-#   enforced at the platform level — Cloud Run validates the proxy's OIDC token
-#   before the function runs, so no in-code auth is needed.
+#   Ten Cloud Function HTTP handlers exposing an MCP-compatible resource
+#   inventory API backed by GCP Cloud Asset Inventory and Cloud Storage.
+#   Authentication is enforced at the platform level — Cloud Run validates
+#   the proxy's OIDC token before the function runs, so no in-code auth
+#   is needed.
 #
 # Auth flow:
 #   Proxy signs OIDC JWT with SA key → exchanges at Google token endpoint →
 #   Cloud Run validates id_token → function runs → plain-text response returned
 #   to AI caller.
+#
+# Handlers:
+#   GET  /tools                        — tool registry for proxy self-config
+#   POST /resources/compute-instances  — Compute Engine VM inventory
+#   POST /resources/storage-buckets    — Cloud Storage bucket list
+#   POST /resources/count-by-type      — ranked resource type summary
+#   POST /resources/by-label           — filter resources by label key+value
+#   POST /resources/static-ips         — static external IP inventory
+#   POST /resources/by-type            — resources of a specific asset type
+#   POST /resources/by-region          — resources in a named region or zone
+#   POST /resources/describe           — full config for a named resource
+#   POST /resources/cloud-functions    — Cloud Function configuration detail
+#   POST /resources/bucket-objects     — objects in a GCS bucket
 # ================================================================================
 
 import json
