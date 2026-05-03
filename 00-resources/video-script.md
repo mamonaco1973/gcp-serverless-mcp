@@ -2,17 +2,13 @@
 
 ---
 
-[ Screen recording of the Notes Demo web app — creating, editing, and deleting notes in the browser ]
+---
 
-"Do you need a secure, authenticated serverless API on AWS?"
+Do you need a clean way to run MCP backends on Google Cloud?
 
-[ Architecture diagram — highlight flow: browser → Cognito → API Gateway → Lambda → DynamoDB ]
+In this project, we implement a reusable MCP pattern using Cloud Functions and JWT based authorization.
 
-"In this project we build a fully serverless notes API using API Gateway, Lambda, and DynamoDB — secured with Cognito and provisioned entirely with Terraform."
-
-[ Terminal running apply.sh — Terraform output, ending with website URL ]
-
-"Follow along and in minutes you'll have a working, authenticated API running in your own AWS account."
+Follow along, and in minutes you’ll have a working backend that any AI client can use to call your serverless tools on Google Cloud.
 
 ---
 
@@ -22,23 +18,35 @@
 
 "Let's walk through the architecture before we build."
 
-[ Highlight browser and S3 bucket ]
+[ Highlight: Claude Desktop ] 
+We start with the AI client — Claude Desktop — issuing MCP tool calls over standard JSON-RPC.
 
-"The user opens a static web page — which is just an HTML file served directly from a public S3 bucket."
+[ Highlight: MCP Proxy ] 
 
-[ Highlight API Gateway ]
+Those calls are picked up by a lightweight MCP proxy. It acts as a bridge — converting local MCP requests into HTTPS calls.
 
-"The frontend talks to an API Gateway HTTP API which is attached to our lambdas."
+[ Highlight: Service Account Key ] 
 
-[ Highlight Lambda functions ]
+The proxy uses a service account key to obtain an OIDC token, so every request is authenticated before it leaves the local machine.
 
-"Each Lambda function handles exactly one thing — POST to create, GET to list, GET by ID to retrieve, PUT to update, DELETE to delete.
+[ Highlight: Cloud Functions ] 
 
-[ Highlight DynamoDB ]
+On the backend, each MCP tool is implemented as a serverless Cloud Function. The function validates the OIDC token before processing the request.
 
-"The backend stores data in DynamoDB. Each note is a JSON document, and the lambdas read and write directly to it."
+[ Highlight: Cloud Asset Inventory ] 
+
+From there, it uses its service account permissions to query Google Cloud — in this case, Cloud Asset Inventory — and returns the results.
+
+[ Full diagram highlight ] 
+
+So to the AI, this looks like a local MCP server.  
+
+[ Highlight the proxy ] 
+
+But in reality, every request is securely routed to a serverless backend in Google Cloud. That’s the core pattern.
 
 ---
+
 
 ## Build the Code
 
@@ -70,77 +78,37 @@
 
 ## Build Results
 
-[ AWS Console — us-east-1 resources ]
+[ Show Cloud Function ] A serverless Cloud Function is deployed as the entry point for all MCP tool calls.
 
-"Let's look at what was deployed."
+[ Show Code ] All requests are secured with an OIDC Bearer token on every call.
 
-[ AWS Console — API Gateway, notes-api ]
+[ Show Service Account ] A dedicated service account is created for the proxy to authenticate against the API.
 
-"First is the API Gateway. This is the entry point for every API call."
+[ Show Proxy Config / Env ] The proxy uses this service account key to acquire and cache OIDC tokens for request authentication.
 
-[ Show Routes ]
+[ Show Python Code ] All tool logic is implemented in Python, with each handler querying Google Cloud services.
 
-"These are the five routes — each one wired to its own Lambda integration."
+[ Show Tool Registry ] A central tool registry defines all available tools, which the proxy loads dynamically at startup.
 
-[ AWS Console — Lambda functions list ]
-
-"We have five Lambda functions — one per operation. 
-Each has its own IAM role scoped to only the DynamoDB actions it needs."
-
-[ AWS Console — DynamoDB table, notes ]
-
-"Next is the DynamoDB table which is the storage layer for our notes.
-
-[ AWS Console — S3 bucket, static website ]
-
-"Finally, a public S3 bucket hosts the static web application."
-
-[ Browser — Notes Demo loads ]
-
-"Open the website URL to launch the test application."
-
+[ Show Desktop JSON ] Finally, client configuration files are generated, allowing the MCP client to connect to the backend. 
 ---
 
 ## Demo
 
-[ Browser — Notes Demo, open DevTools → Network tab ]
+First, update your AI client configuration — here I’m using Claude Desktop.
 
-"Open the web app — and the browser debugger so we can watch the API calls."
+On windows Powershell 7 is required, make sure the "pwsh" command is available. 
 
-[ Refresh page — network calls visible ]
+Restart the client and confirm it recognizes the serverless MCP.
 
-"When the app loads, it calls the list endpoint. No notes yet."
+Now let’s try it — show me all my cloud functions.
 
-[ Clicking New — modal opens, typing a title, clicking Create ]
+You’ll get a complete list acros the project.
 
-"Now let's create a new note by selecting New."
+Next, Ask for details on the mcp cloud function.
 
-[ Show API working ]
+Now we get a descripton of the mcp cloud function.
 
-"A POST to the API is made which returns an ID."
+Finally, ask it to interpret what this cloud function does.
 
-[ Clicking the note in the list ]
-
-"The new note is also selected and the API loads the content."
-
-[ Editing and clicking Save ]
-
-"Now let's update the note and select Save."
-
-[ Show network tab ]
-
-"A PUT call is made — and the updated data is stored in DynamoDB."
-
-[ Clicking Delete ]
-
-"Now let's delete the note by selecting Delete."
-
-[ Show network ]
-
-"A DELETE call is made — and the note is removed."
-
-[ Browser — empty list ]
-
-"In this demo, we've now exercised every API endpoint."
-
----
+Here it correctly identifies this as an AI assistant backend.
