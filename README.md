@@ -1,190 +1,69 @@
-# GCP Serverless MCP — Cloud Asset Inventory API
+# Serverless MCP on GCP: Cloud Asset Inventory Tools
 
-This project delivers a **serverless MCP (Model Context Protocol) backend** on
-GCP that lets an AI assistant query GCP resource inventory in plain English.
-Ten Cloud Functions 2nd Gen handlers expose resource query tools behind an
-**HTTP API** secured with **GCP OIDC authentication**. A lightweight local
-proxy acquires OIDC tokens and forwards MCP calls to the Cloud Function,
-making the remote serverless backend completely transparent to the AI caller.
+A **serverless MCP (Model Context Protocol) backend** that lets an AI
+assistant ask about your GCP resources in plain English. One second-generation
+**Cloud Function** routes ten resource tools and a tool registry, and
+**Cloud Run IAM** rejects any caller without an ID token for the proxy's
+service account before the code runs. A small local proxy speaks MCP over
+stdio to the AI client, mints and caches the token, and forwards each call,
+so the remote API looks like a local tool server.
 
-It uses **Terraform** and **Python (google-cloud-asset, google-cloud-storage)**
-to provision and deploy the backend, and a **PowerShell or Bash proxy script**
-to bridge the MCP stdio transport to the authenticated HTTP API.
+| Piece | Where | Role |
+|---|---|---|
+| **proxy.sh** / **proxy.ps1** | your machine | stdio MCP server (JSON-RPC 2.0); signs a JWT with the proxy key and exchanges it for an ID token, refreshed 60 s before expiry; loads its tool list from `GET /tools` |
+| **serverless-mcp-func-&lt;hex&gt;** | `us-central1`, 2nd gen | Python 3.11, 256 MB, 60 s timeout, 0 to 10 instances; entry point `serverless_mcp` routes by path |
+| **serverless-mcp-func-sa** | IAM | the function's identity: `roles/cloudasset.viewer` and `roles/storage.objectViewer` on the project |
+| **serverless-mcp-proxy-sa** | IAM | the proxy's identity: `roles/run.invoker` and `roles/cloudfunctions.invoker` on the function only; its key is written to `02-proxy/proxy-sa-key.json` |
+| **serverless-mcp-src-&lt;hex&gt;** | Cloud Storage, `US` | the function's source zip, named by its MD5 so a code change redeploys |
 
-This design follows a **serverless MCP architecture** where the AI thinks it is
-talking to a local tool server, while all tool logic runs in a Cloud Function
-querying the GCP Cloud Asset Inventory API. Cloud Run IAM enforces OIDC token
-authentication on every route, and the proxy handles token acquisition and
-caching.
+## Architecture
 
-![diagram](gcp-serverless-mcp.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="architecture-dark.svg">
+  <img alt="Claude Desktop runs proxy.sh or proxy.ps1 as a local MCP server over stdio. The proxy signs a JWT with the serverless-mcp-proxy-sa key and exchanges it at Google's token endpoint for an ID token, which it caches. Cloud Run IAM checks that the caller holds run.invoker before the request reaches serverless-mcp-func, a single Python 3.11 Cloud Function that routes GET /tools and ten POST /resources/* paths. It runs as its own service account, searching Cloud Asset Inventory with cloudasset.viewer and listing bucket objects with storage.objectViewer." src="architecture-light.svg">
+</picture>
 
-Key capabilities demonstrated:
+Regenerate with `python3 make_diagram.py`.
 
-1. **Serverless MCP Tools** – Ten Cloud Function-backed resource query tools
-   exposed as a standard MCP tool server, invokable by any MCP-compatible AI
-   client.
-2. **GCP OIDC Auth** – All routes require a valid OIDC id_token validated at
-   the Cloud Run platform level. The proxy SA key file signs a JWT that is
-   exchanged for an id_token at the Google token endpoint.
-3. **Self-Configuring Proxy** – At startup the proxy calls `GET /tools`
-   (authenticated) to load route mappings and tool schemas from the backend.
-   No tool definitions are hardcoded in the proxy — add a tool in `main.py`,
-   redeploy, and the proxy picks it up automatically on next start.
-4. **Generic Proxy Pattern** – The proxy contains no tool-specific logic. Point
-   it at a different `MCP_API_ENDPOINT` to get a completely different tool set.
-5. **ADC Function Identity** – The Cloud Function queries Cloud Asset Inventory
-   using Application Default Credentials (its service account). No credentials
-   in code or environment variables.
-6. **Infrastructure as Code** – Terraform provisions all Cloud Functions,
-   service accounts, IAM bindings, and source storage in a single apply.
+- **`01-functions/`**: `functions.tf` (both service accounts, their roles,
+  the proxy key, the source bucket, the function and its invoker bindings),
+  `main.tf` (providers; the project comes from `credentials.json`), and the
+  code in `code/main.py`. `entra.tf` and `rbac.tf` hold only comments.
+- **`02-proxy/`**: the Bash and PowerShell proxies.
 
-Together, these components form a **reference architecture for serverless MCP
-tool backends on GCP** — demonstrating how AI tools can be centrally deployed,
-versioned, and secured without requiring local runtimes on the caller's machine.
+## How a call is authorized
 
-## Prerequisites
+1. The proxy reads `proxy-sa-key.json`, signs a JWT whose `target_audience`
+   is the function URL, and posts it to `https://oauth2.googleapis.com/token`
+   for an ID token.
+2. Cloud Run checks the token and that `serverless-mcp-proxy-sa` holds
+   `roles/run.invoker`; anything else gets `403` (`401` with no token) and
+   never reaches the code.
+3. The function itself does no auth check. It runs as
+   `serverless-mcp-func-sa`, so it can read only what that account's two
+   roles allow.
 
-* A GCP project
-* [Install gcloud CLI](https://cloud.google.com/sdk/docs/install)
-* [Install Terraform](https://developer.hashicorp.com/terraform/install)
-* `jq` in PATH (used by `apply.sh` and `validate.sh`)
-* `credentials.json` (GCP service account key) placed in the repo root
-* Service account needs: Cloud Functions Admin, Cloud Run Admin,
-  Cloud Build Editor, Artifact Registry Admin, IAM Admin,
-  Cloud Asset Viewer, Storage Admin, Service Account Admin,
-  Service Account Key Admin, Project IAM Admin
+## MCP tools
 
-> **PowerShell proxy (`proxy.ps1`) requires PowerShell 7+** (`pwsh`).
-> It uses `[System.Security.Cryptography.RSA]::ImportFromPem()` to load the
-> service account private key, which is not available in Windows PowerShell 5.1.
-> Install PowerShell 7 from https://aka.ms/powershell or via `winget install Microsoft.PowerShell`.
-> On Linux/macOS use `proxy.sh` instead — it has no PowerShell dependency.
+Each tool takes a JSON body and returns plain text, so the AI can read it
+out directly.
 
-## Download this Repository
+| Tool | Route | Input | Returns |
+|---|---|---|---|
+| `list_compute_instances` | `POST /resources/compute-instances` | none | VMs with machine type, zone and status |
+| `list_storage_buckets` | `POST /resources/storage-buckets` | none | buckets with location and storage class |
+| `count_resources_by_type` | `POST /resources/count-by-type` | none | asset types ranked by count |
+| `find_resources_by_label` | `POST /resources/by-label` | `label_key`, `label_value` | resources with that label |
+| `list_static_ip_addresses` | `POST /resources/static-ips` | none | reserved external addresses with region and status |
+| `find_resources_by_type` | `POST /resources/by-type` | `asset_type` | resources of that type, e.g. `compute.googleapis.com/Instance` |
+| `find_resources_by_region` | `POST /resources/by-region` | `region` | resources in that region or zone |
+| `describe_resource` | `POST /resources/describe` | `resource_name` | the full configuration of each matching resource |
+| `list_cloud_functions_detail` | `POST /resources/cloud-functions` | none | functions with runtime, memory, URL, service account and environment variables |
+| `list_bucket_objects` | `POST /resources/bucket-objects` | `bucket_name` | objects with size and last-modified time |
 
-```bash
-git clone https://github.com/mamonaco1973/gcp-serverless-mcp.git
-cd gcp-serverless-mcp
-```
+Everything except `list_bucket_objects` queries Cloud Asset Inventory,
+scoped to the project. A missing required input returns `400`. For example:
 
-Place your GCP service account key at `credentials.json` in the repo root.
-
-## Build the Code
-
-Run [check_env](check_env.sh) to validate your environment, then run
-[apply](apply.sh) to provision the infrastructure.
-
-```bash
-~/gcp-serverless-mcp$ ./apply.sh
-NOTE: Running environment validation...
-NOTE: gcloud found.
-NOTE: terraform found.
-NOTE: jq found.
-NOTE: Deploying GCP infrastructure...
-...
-NOTE: Validation complete — all 11 endpoints returned HTTP 200.
-```
-
-### Build Results
-
-When the deployment completes, the following resources are created:
-
-- **Core Infrastructure:**
-  - Fully serverless — no VMs, containers, or VPC required
-  - Single-phase Terraform deploy from the `01-functions` directory
-  - Cloud Functions 2nd Gen (backed by Cloud Run) — scales to zero when idle
-
-- **Security & Auth:**
-  - `serverless-mcp-func-sa` — function service account with
-    `roles/cloudasset.viewer` to query Cloud Asset Inventory and
-    `roles/storage.objectViewer` to list bucket contents
-  - `serverless-mcp-proxy-sa` — proxy service account with `roles/run.invoker`
-    on the function; key exported to `02-proxy/proxy-sa-key.json`
-  - OIDC id_token validated by Cloud Run platform — no in-code JWT validation
-    needed (unlike the Azure variant which requires in-code JWKS validation
-    due to FC1 Easy Auth limitations)
-
-- **Cloud Function Handlers:**
-  - Eleven Python 3.11 handlers in a single `main.py`
-  - `GET /tools` — discovery endpoint; returns tool registry for proxy
-    self-config
-  - Ten `POST /resources/*` routes — one per MCP tool
-
-- **MCP Proxy Scripts:**
-  - `02-proxy/proxy.ps1` — Windows PowerShell 7+ proxy with OIDC token
-    management
-  - `02-proxy/proxy.sh` — Bash equivalent (Linux / macOS / Git Bash)
-  - Both implement full MCP JSON-RPC 2.0 stdio transport with token caching and
-    proactive refresh 60 seconds before expiry
-
-- **Claude Desktop Integration:**
-  - `apply.sh` generates `02-proxy/claude_desktop_config_ps1.json` and
-    `02-proxy/claude_desktop_config_sh.json` directly from Terraform outputs —
-    replace `REPLACE_WITH_ABSOLUTE_PATH` with your local path and copy to
-    `%APPDATA%\Claude\claude_desktop_config.json`, then restart Claude Desktop
-
-- **Automation & Validation:**
-  - `apply.sh`, `destroy.sh`, `check_env.sh`, and `validate.sh` automate the
-    full lifecycle — no manual console steps required
-
----
-
-## MCP Tools
-
-The **GCP Resource MCP API** exposes ten tools through a single Cloud
-Function. Six tools take no input parameters; four accept parameters to
-filter or target results. All responses are plain-text summaries suitable for
-direct AI narration.
-
-> All routes require a valid **GCP OIDC id_token** issued for the proxy service
-> account. The proxy acquires and caches this token automatically.
-
-### Discovery Endpoint
-
-The proxy calls `GET /tools` at startup to self-configure. `main.py` returns
-`TOOL_REGISTRY` — the single source of truth for all tool metadata:
-
-```json
-[
-  {
-    "name": "list_compute_instances",
-    "description": "Lists all Compute Engine VM instances...",
-    "inputSchema": { "type": "object", "properties": {}, "required": [] },
-    "route": "/resources/compute-instances"
-  },
-  ...
-]
-```
-
-The proxy strips `route` before forwarding tool schemas to the AI.
-
-### Tool Summary
-
-| Tool | Route | Input | Description |
-|------|-------|-------|-------------|
-| `list_compute_instances` | `POST /resources/compute-instances` | none | All VMs with name, machine type, zone, status |
-| `list_storage_buckets` | `POST /resources/storage-buckets` | none | All GCS buckets with location and storage class |
-| `count_resources_by_type` | `POST /resources/count-by-type` | none | Ranked count of all resource types in the project |
-| `find_resources_by_label` | `POST /resources/by-label` | `label_key`, `label_value` | All resources matching a specific label key/value pair |
-| `list_static_ip_addresses` | `POST /resources/static-ips` | none | All static external IPs with address, region, status |
-| `find_resources_by_type` | `POST /resources/by-type` | `asset_type` | All resources of a specific GCP asset type |
-| `find_resources_by_region` | `POST /resources/by-region` | `region` | All resources in a specific GCP region or zone |
-| `describe_resource` | `POST /resources/describe` | `resource_name` | Full configuration detail for a named resource |
-| `list_cloud_functions_detail` | `POST /resources/cloud-functions` | none | All Cloud Functions with runtime, memory, URL, SA, env vars |
-| `list_bucket_objects` | `POST /resources/bucket-objects` | `bucket_name` | All objects in a GCS bucket with size and last-modified |
-
-### Example Tool Responses
-
-**`list_compute_instances`**
-```
-Compute Engine instances (2 total):
-
-  my-web-server                   n2-standard-2             us-central1-a             RUNNING
-  my-worker-vm                    e2-medium                 us-east1-b                TERMINATED
-```
-
-**`count_resources_by_type`**
 ```
 Resources by type (14 total):
 
@@ -196,27 +75,112 @@ Resources by type (14 total):
       ...
 ```
 
-**`find_resources_by_region`** (with `region: "us-central1"`)
+### How the proxy configures itself
+
+At startup the proxy calls `GET /tools` and gets `TOOL_REGISTRY`:
+
+```json
+[
+  {
+    "name": "list_compute_instances",
+    "description": "Lists all Compute Engine VM instances in the project with name, machine type, zone, and status.",
+    "inputSchema": { "type": "object", "properties": {}, "required": [] },
+    "route": "/resources/compute-instances"
+  }
+]
 ```
-Resources in us-central1 (5 total):
 
-  serverless-mcp-func-xxxx        cloudfunctions.googleapis.com/CloudFunction  us-central1
-  my-web-server                   compute.googleapis.com/Instance              us-central1-a
-  serverless-mcp-src-xxxx         storage.googleapis.com/Bucket                us-central1
-  ...
+It keeps `route` for itself and hands the AI the standard MCP fields. To add
+a tool, add it to `TOOL_REGISTRY` and the route table in `main.py` and
+redeploy; the proxy picks it up on its next start. Because the proxy has no
+tool-specific code, it can front any backend that serves `GET /tools` in
+this format.
+
+## Prerequisites
+
+* [A Google Cloud Account](https://console.cloud.google.com/)
+* [Install gcloud CLI](https://cloud.google.com/sdk/docs/install)
+* [Install Terraform](https://developer.hashicorp.com/terraform/install)
+* [Install jq](https://jqlang.github.io/jq/download/)
+* `bash` 4+, `curl` and `openssl` (for `proxy.sh`), or **PowerShell 7+**
+  (`pwsh`) for `proxy.ps1`: it loads the key with `RSA.ImportFromPem()`,
+  which Windows PowerShell 5.1 doesn't have
+* An MCP client: Claude Desktop, or any host that supports stdio servers
+
+Put a service account key in the repository root as `credentials.json`. The
+account needs to create service accounts and their keys, grant project IAM
+roles, and deploy Cloud Functions. If this is your first time following
+along, we recommend starting with this video:
+[GCP + Terraform: Easy Setup](https://youtu.be/3spJpYX4f7I).
+
+## Deploy
+
+```bash
+git clone https://github.com/mamonaco1973/gcp-serverless-mcp.git
+cd gcp-serverless-mcp
+./apply.sh
 ```
 
----
+`check_env.sh` signs in with `credentials.json` and runs `api_setup.sh`,
+which enables the Cloud Asset, Cloud Functions, Cloud Run, Cloud Build,
+Artifact Registry and IAM APIs. `apply.sh` then applies `01-functions`,
+writes the proxy key to `02-proxy/proxy-sa-key.json` (mode 600), and writes
+`02-proxy/claude_desktop_config_ps1.json` and `claude_desktop_config_sh.json`;
+all three are gitignored. It ends by running `validate.sh`, which gets an ID
+token as the proxy account, waits up to two minutes for the endpoint, and
+calls all eleven routes:
 
-### Request & Response Characteristics
+```
+NOTE: Endpoint ready after 0s.
 
-| Endpoint | Method | Auth | Request Body | Response |
-|----------|--------|------|--------------|----------|
-| `/tools` | `GET` | OIDC id_token | none | JSON array of tool descriptors |
-| `/resources/*` | `POST` | OIDC id_token | `{}` or `{"param": "value"}` | Plain-text human-readable summary |
+NOTE: Validating all endpoints...
 
----
+NOTE: OK  GET /tools
+       list_compute_instances           /resources/compute-instances
+       ...
+NOTE: OK  POST /resources/bucket-objects
+       ...
 
-## MCP Proxy Request Flow
+========================================================================
+  Validation complete — all 11 endpoints returned HTTP 200.
+========================================================================
+```
 
-![flow](gcp-serverless-mcp-flow.png)
+## Try it
+
+1. Copy the `mcpServers` block from `02-proxy/claude_desktop_config_sh.json`
+   (Bash) or `claude_desktop_config_ps1.json` (PowerShell) into your Claude
+   Desktop `claude_desktop_config.json`, and replace
+   `REPLACE_WITH_ABSOLUTE_PATH` in both the script path and
+   `MCP_SA_KEY_FILE` with where you cloned the repository.
+2. Restart Claude Desktop and ask, for example, "What's running in
+   us-central1?" or "Describe serverless-mcp-func."
+3. Call the function without a token and Cloud Run refuses it:
+
+   ```bash
+   curl -i https://<function-url>/tools
+   ```
+
+## Teardown
+
+```bash
+./destroy.sh
+```
+
+`destroy.sh` also deletes the proxy key and the generated configs.
+
+## Notes
+
+- **Lab only.** The proxy key is a long-lived service account key; it's in
+  the Terraform state and in `02-proxy/proxy-sa-key.json`.
+- `list_cloud_functions_detail` prints every function's environment
+  variables, and `describe_resource` prints full resource configurations, so
+  anything stored there reaches the AI client. `storage.objectViewer` is
+  granted on the whole project, so `list_bucket_objects` can list any bucket
+  in it.
+- The proxy sends your user name in `x-mcp-user`, but this function doesn't
+  log it.
+- `02-proxy/claude_desktop_config_{sh,ps1}.json.tmpl` aren't used:
+  `apply.sh` builds the configs with `jq`.
+- `webapp.png` in this repository shows a different project (a notes demo)
+  and isn't used here.
